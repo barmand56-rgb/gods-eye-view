@@ -1,3 +1,12 @@
-export { default } from './server/standalone/vite.config.js';
-// Preserve existing test and tooling imports while provider modules are split.
-export * from './server/providers/local.js';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  preview: {
+    allowedHosts: true,
+    host: '0.0.0.0',
+  },
+  server: {
+    allowedHosts: true,
+    host: '0.0.0.0',
+  }
+});
