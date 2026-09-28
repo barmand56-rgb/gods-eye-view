@@ -52,6 +52,7 @@ export async function createApplicationScene({
     creditContainer,
   });
 viewer.scene.rethrowRenderErrors = false;
+Cesium.FeatureDirection.supportsImageRendering = () => true;
   viewer.useDefaultRenderLoop = true;
 if (viewer.renderError) {
   viewer.renderError.addEventListener((viewer, error) => {
