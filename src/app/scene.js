@@ -51,7 +51,7 @@ export async function createApplicationScene({
     container: 'cesiumContainer',
     creditContainer,
   });
-
+viewer.scene.rethrowRenderErrors = false;
   viewer.useDefaultRenderLoop = true;
 if (viewer.renderError) {
   viewer.renderError.addEventListener((viewer, error) => {
