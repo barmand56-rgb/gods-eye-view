@@ -51,6 +51,14 @@ export async function createApplicationScene({
     container: 'cesiumContainer',
     creditContainer,
   });
+
+  viewer.useDefaultRenderLoop = true;
+if (viewer.renderError) {
+  viewer.renderError.addEventListener((viewer, error) => {
+    console.warn("Erreur de rendu ignorée pour maintenir le globe :", error);
+  });
+}
+
   defer(() => {
     uninstallRenderGovernor(viewer);
     if (!viewer.isDestroyed()) viewer.destroy();
