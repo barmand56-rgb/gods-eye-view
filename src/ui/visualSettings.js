@@ -495,9 +495,9 @@ export class VisualSettings {
     const { governorRequestRender } = this.services;
     governorRequestRender('sharpen');
     this._visualEffects.setSharpenEnabled(enabled);
-    this._sharpenBtn.classList.toggle('active', this.sharpenEnabled);
+    this._sharpenBtn?.classList.toggle('active', this.sharpenEnabled);
     if (this._sharpenSliderRow) {
-      this._sharpenSliderRow.classList.toggle('visible', this.sharpenEnabled);
+      this._sharpenSliderRow?.classList.toggle('visible', this.sharpenEnabled);
     }
     if (this.sharpenEnabled && this._sharpenSlider) {
       this._applySharpenIntensity(
