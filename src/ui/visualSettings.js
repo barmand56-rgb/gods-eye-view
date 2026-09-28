@@ -475,16 +475,19 @@ export class VisualSettings {
 
   _setBloomEnabled(enabled) {
     const { governorRequestRender } = this.services;
-    governorRequestRender('bloom');
-    this._visualEffects.setBloomEnabled(enabled);
-    this._syncBloomStageEnabled();
-    this._bloomBtn?.classList.toggle('active', this.bloomEnabled);
-    this._bloomSliderRow?.classList.toggle('visible', this.bloomEnabled);
+    governorRequestRender?.('bloom');
+    this._visualEffects?.setBloomEnabled(enabled);
+    this._syncBloomStageEnabled?.();
+    
+    // Sécurisation DOM
+    this._bloomBtn?.classList?.toggle('active', this.bloomEnabled);
+    this._bloomSliderRow?.classList?.toggle('visible', this.bloomEnabled);
+    
     if (this.bloomEnabled) {
-      this._applyBloomIntensity(this._getBloomIntensity());
+      this._applyBloomIntensity?.(this._getBloomIntensity?.());
     }
-    this._syncShareState();
-    this._layoutRightPanels();
+    this._syncShareState?.();
+    this._layoutRightPanels?.();
   }
 
   _applySharpenIntensity(val) {
@@ -492,20 +495,11 @@ export class VisualSettings {
   }
 
   _setSharpenEnabled(enabled) {
-    const { governorRequestRender } = this.services;
-    governorRequestRender('sharpen');
-    this._visualEffects.setSharpenEnabled(enabled);
-    this._sharpenBtn?.classList.toggle('active', this.sharpenEnabled);
-    if (this._sharpenSliderRow) {
-      this._sharpenSliderRow?.classList.toggle('visible', this.sharpenEnabled);
-    }
-    if (this.sharpenEnabled && this._sharpenSlider) {
-      this._applySharpenIntensity(
-        parseInt(this._sharpenSlider.value, 10) / 100,
-      );
-    }
-    this._syncShareState();
-    this._layoutRightPanels();
+    this._visualEffects?.setSharpenEnabled?.(enabled);
+    
+    // Sécurisation DOM
+    this._sharpenBtn?.classList?.toggle('active', enabled);
+    this._sharpenSliderRow?.classList?.toggle('visible', enabled);
   }
 
   _applyDetectionDensityFromUi() {
@@ -1595,15 +1589,14 @@ export class VisualSettings {
   }
 
   _updateHudButtonState() {
-    this._hudBtn?.classList.toggle('active', this.hud.visible);
-    if (this._hudLayoutRow) {
-      this._hudLayoutRow.classList.toggle('visible', this.hud.visible);
-    }
-    this._scheduleAdaptivePanelLayout({ settle: true });
+    const btn = this._hudButton || this._hudBtn;
+    if (!btn) return;
+    btn.classList.toggle('active', !!this.hudEnabled);
   }
 
   _updateDetectionButton(modeLabel) {
     const btn = this._detectionBtn;
+    if (!btn) return;
     const enabled = modeLabel !== 'OFF';
     btn.setAttribute('aria-pressed', String(enabled));
     btn.setAttribute(
