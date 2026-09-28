@@ -51,19 +51,16 @@ export async function createApplicationScene({
     container: 'cesiumContainer',
     creditContainer,
   });
+
 viewer.scene.rethrowRenderErrors = false;
-Cesium.FeatureDirection.supportsImageRendering = () => true;
   viewer.useDefaultRenderLoop = true;
-if (viewer.renderError) {
-  viewer.renderError.addEventListener((viewer, error) => {
-    console.warn("Erreur de rendu ignorée pour maintenir le globe :", error);
-  });
-}
 
   defer(() => {
     uninstallRenderGovernor(viewer);
     if (!viewer.isDestroyed()) viewer.destroy();
   });
+}
+
   defer(installTrackpadPinchZoom(viewer));
   registerDataCredits(viewer, credits);
   configureCreditKeyboardAccess(document);
