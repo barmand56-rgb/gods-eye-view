@@ -59,8 +59,8 @@ viewer.scene.rethrowRenderErrors = false;
     uninstallRenderGovernor(viewer);
     if (!viewer.isDestroyed()) viewer.destroy();
   });
-}
 
+  
   defer(installTrackpadPinchZoom(viewer));
   registerDataCredits(viewer, credits);
   configureCreditKeyboardAccess(document);
