@@ -101,8 +101,8 @@ export class VisualSettings {
     if (typeof sharpen === 'boolean') this._setSharpenEnabled(sharpen);
     if (hudVariant) this._setHudVariant(hudVariant);
     if (typeof hudVisible === 'boolean') {
-      this.hud.setMode(hudVisible ? 'on' : 'off');
-      this._updateHudButtonState();
+      this.hud?.setMode(hudVisible ? 'on' : 'off');
+      this._updateHudButtonState?.();
     }
     if (typeof detectionDensity === 'number' && this._detectionDensitySlider) {
       const pct = canonicalizeDensity(detectionDensity);
@@ -478,8 +478,8 @@ export class VisualSettings {
     governorRequestRender('bloom');
     this._visualEffects.setBloomEnabled(enabled);
     this._syncBloomStageEnabled();
-    this._bloomBtn.classList.toggle('active', this.bloomEnabled);
-    this._bloomSliderRow.classList.toggle('visible', this.bloomEnabled);
+    this._bloomBtn?.classList.toggle('active', this.bloomEnabled);
+    this._bloomSliderRow?.classList.toggle('visible', this.bloomEnabled);
     if (this.bloomEnabled) {
       this._applyBloomIntensity(this._getBloomIntensity());
     }
@@ -1595,7 +1595,7 @@ export class VisualSettings {
   }
 
   _updateHudButtonState() {
-    this._hudBtn.classList.toggle('active', this.hud.visible);
+    this._hudBtn?.classList.toggle('active', this.hud.visible);
     if (this._hudLayoutRow) {
       this._hudLayoutRow.classList.toggle('visible', this.hud.visible);
     }

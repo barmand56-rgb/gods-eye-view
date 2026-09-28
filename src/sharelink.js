@@ -541,6 +541,7 @@ export class ShareLinkManager {
 
   /** Build a deterministic snapshot without mutating history. */
   _buildHashParams() {
+    if (!this.viewer || !this.viewer.scene) return;
     if (this._destroyed) return null;
     const camera = this.viewer.camera;
     const carto = camera.positionCartographic;

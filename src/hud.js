@@ -337,6 +337,7 @@ export class IntelHUD {
    * collection timestamp. Stores results in {@link _latestMetrics}.
    */
   _updateCameraData() {
+    if (!this.viewer || !this.viewer.scene || !this.viewer.camera) return;
     const camera = this.viewer.camera;
     const cartographic = camera.positionCartographic;
     if (!cartographic) return;
@@ -569,6 +570,7 @@ export class IntelHUD {
    *   dimensions, or null if the view rectangle cannot be computed.
    */
   _viewWindowKm(latDeg) {
+    if (!this.viewer || !this.viewer.scene) return 0;
     const rect = this.viewer.camera.computeViewRectangle();
     if (!rect) return null;
     const north = Cesium.Math.toDegrees(rect.north);
@@ -633,6 +635,7 @@ export class IntelHUD {
    * @returns {string} Formatted summary line for the HUD summary readout.
    */
   _composeSummary() {
+    if (!this.viewer || !this.viewer.scene) return '';
     const m = this._latestMetrics;
     if (!m) return 'Awaiting telemetry...';
 

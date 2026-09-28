@@ -32,7 +32,7 @@ export class LocationControls {
     this.frame = null;
     this.destroyed = false;
     this.rowGeneration = 0;
-    elements.pills.replaceChildren();
+    elements.pills?.replaceChildren();
     for (const [id, city] of Object.entries(cities)) {
       const pill = doc.createElement('button');
       pill.type = 'button';
@@ -40,7 +40,7 @@ export class LocationControls {
       pill.dataset.locationId = id;
       pill.textContent = city.name;
       this.bind(pill, 'click', () => onCity(id));
-      elements.pills.appendChild(pill);
+      elements.pills?.appendChild(pill);
     }
     this.bind(doc, 'keydown', (event) => {
       const cityId = getExpandedCity();
