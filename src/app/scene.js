@@ -1,6 +1,5 @@
 import * as Cesium from 'cesium';
 import { createApplicationViewer } from './viewer.js';
-import { uninstallRenderGovernor } from './renderGovernor.js';
 import { installTrackpadPinchZoom } from './trackpad.js';
 import { registerDataCredits, configureCreditKeyboardAccess } from './credits.js';
 import { loadPhotorealisticTileset } from './google3d.js';
@@ -24,19 +23,18 @@ export async function createApplicationScene({ googleApiKey, cesiumToken, credit
     creditContainer,
   });
 
-  // 3. Sécurisation ultra-résistante du moteur de rendu (Anticrash)
+  // 3. Sécurisation du moteur de rendu (Anticrash)
   viewer.scene.rethrowRenderErrors = false;
   viewer.useDefaultRenderLoop = true;
 
   if (viewer.scene.renderError) {
     viewer.scene.renderError.addEventListener((scene, error) => {
-      console.warn('Erreur de texture ou de rendu ignorée par la sécurité :', error);
+      console.warn('Erreur de texture ou de rendu ignorée :', error);
     });
   }
 
   // Nettoyage au démontage
   defer(() => {
-    uninstallRenderGovernor(viewer);
     if (!viewer.isDestroyed()) {
       viewer.destroy();
     }
@@ -49,7 +47,7 @@ export async function createApplicationScene({ googleApiKey, cesiumToken, credit
   }
   configureCreditKeyboardAccess(document);
 
-  // 5. Chargement sécurisé des tuiles 3D avec Fallback automatique
+  // 5. Chargement des tuiles 3D avec secours automatique
   if (loaderStatus) {
     loaderStatus.textContent = (googleApiKey || cesiumToken)
       ? 'Chargement de Google 3D Tiles...'
@@ -78,7 +76,7 @@ export async function createApplicationScene({ googleApiKey, cesiumToken, credit
   } catch (error) {
     console.warn('Google 3D Tiles indisponible (Clé 403 ou réseau). Bascule automatique sur la Terre 3D de secours.', error);
     
-    // Activer la Terre 3D par défaut en cas d'erreur Google 403
+    // Activer la Terre 3D par défaut en cas d'erreur
     viewer.scene.globe.show = true;
     
     if (loaderStatus) {
