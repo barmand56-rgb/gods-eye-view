@@ -1,155 +1,93 @@
-import { createApplicationOperations } from './operations.js';
 import * as Cesium from 'cesium';
-import {
-  createApplicationViewer,
-  installTrackpadPinchZoom,
-} from '../app/viewer.js';
-import { registerDataCredits } from '../data/dataCredits.js';
-import { configureCreditKeyboardAccess } from '../creditKeyboard.js';
-import { MapStackController } from '../mapStackController.js';
-import { loadPhotorealisticTileset } from '../mapStartup.js';
-import { initLogoGaze } from '../logoGaze.js';
-import {
-  uninstallRenderGovernor,
-  governorRequestRender,
-} from '../renderGovernor.js';
-import { describeError } from './errors.js';
+import { createApplicationViewer } from './viewer.js';
+import { uninstallRenderGovernor } from './renderGovernor.js';
+import { installTrackpadPinchZoom } from './trackpad.js';
+import { registerDataCredits, configureCreditKeyboardAccess } from './credits.js';
+import { loadPhotorealisticTileset } from './google3d.js';
+import { defer } from './utils.js';
 
-/** Construct the application globe using the caller's local configuration. */
-export async function createApplicationScene({
-  requestServices,
-  googleApiKey,
-  cesiumToken,
-  credits,
-  MapController = MapStackController,
-  mapOptions = {},
-  loaderStatus,
-  signal,
-  defer,
-}) {
-  const operations = createApplicationOperations({
-    requests: requestServices,
-    signal,
-  });
-  defer(initLogoGaze());
-  const previousKey = window.__GOOGLE_MAPS_API_KEY__;
-  if (googleApiKey) {
-    window.__GOOGLE_MAPS_API_KEY__ = googleApiKey;
-    defer(() => {
-      if (window.__GOOGLE_MAPS_API_KEY__ !== googleApiKey) return;
-      if (previousKey === undefined) delete window.__GOOGLE_MAPS_API_KEY__;
-      else window.__GOOGLE_MAPS_API_KEY__ = previousKey;
-    });
-  }
-  loaderStatus.textContent = 'Configuring viewer...';
-  // Provider attribution stays visible, including clean-view and recording.
+/**
+ * Initialise et configure la scène 3D Cesium.
+ */
+export async function createApplicationScene({ googleApiKey, cesiumToken, credits } = {}) {
+  const loaderStatus = document.querySelector('#loading-loaderStatus');
+
+  // 1. Conteneur pour les crédits
   const creditContainer = document.createElement('div');
-  creditContainer.id = 'cesium-credits';
+  creditContainer.className = 'cesium-credit-container-custom';
   document.body.appendChild(creditContainer);
   defer(() => creditContainer.remove());
+
+  // 2. Création du viewer Cesium
   const viewer = createApplicationViewer({
     container: 'cesiumContainer',
     creditContainer,
   });
 
-viewer.scene.rethrowRenderErrors = false;
+  // 3. Sécurisation ultra-résistante du moteur de rendu (Anticrash)
+  viewer.scene.rethrowRenderErrors = false;
   viewer.useDefaultRenderLoop = true;
 
   if (viewer.scene.renderError) {
     viewer.scene.renderError.addEventListener((scene, error) => {
-      console.warn("Erreur de texture/tuile ignorée :", error);
+      console.warn('Erreur de texture ou de rendu ignorée par la sécurité :', error);
     });
-  }
-  
-  // Chargement sécurisé avec Fallback
-  try {
-    const photoreal = await loadPhotorealisticTileset(Cesium, {
-      googleApiKey,
-      cesiumToken,
-    });
-    if (photoreal && photoreal.tileset) {
-      viewer.scene.primitives.add(photoreal.tileset);
-    }
-  } catch (err) {
-    console.warn("Google 3D Tiles indisponible (403), chargement du globe par défaut...", err);
-    // Utiliser la terre 3D Cesium par défaut si Google bloque
-    viewer.scene.globe.show = true;
   }
 
+  // Nettoyage au démontage
   defer(() => {
     uninstallRenderGovernor(viewer);
-    if (!viewer.isDestroyed()) viewer.destroy();
+    if (!viewer.isDestroyed()) {
+      viewer.destroy();
+    }
   });
 
-  if (viewer.scene.renderError) {
-    viewer.scene.renderError.addEventListener((scene, error) => {
-      console.warn("Erreur de texture ou tuile ignorée :", error);
-    });
-  }
-
+  // 4. Configuration des interactions et contrôles
   defer(installTrackpadPinchZoom(viewer));
-  registerDataCredits(viewer, credits);
+  if (credits) {
+    registerDataCredits(viewer, credits);
+  }
   configureCreditKeyboardAccess(document);
-  loaderStatus.textContent =
-    googleApiKey || cesiumToken
-      ? 'Loading Google 3D Tiles...'
-      : 'Loading the keyless globe...';
-  const photoreal = await loadPhotorealisticTileset(Cesium, {
-    googleApiKey,
-    cesiumToken,
-  });
-  const tileset = photoreal.tileset;
-  // A provider can finish after cancellation; retain ownership of its result.
-  defer(() => {
-    if (tileset && !tileset.isDestroyed()) {
-      if (!viewer.scene.primitives.remove(tileset)) tileset.destroy();
-    }
-  });
-  signal.throwIfAborted();
-  if (tileset) {
-    viewer.scene.primitives.add(tileset);
-    // NOTE: Cesium World Terrain intentionally disabled — conflicts with Google 3D Tiles at high zoom.
-    // Google Photorealistic 3D Tiles provide their own terrain/elevation.
-    viewer.scene.globe.show = false;
-    console.info(`[Init] Google 3D Tiles loaded via ${photoreal.route}.`);
-  } else {
-    if (photoreal.errors.length) {
-      const tileError = photoreal.errors.at(-1);
-      console.warn(
-        '[Init] Google 3D Tiles unavailable, using the keyless globe:',
-        tileError,
-      );
-      const tileErrorDetail = describeError(tileError);
-      loaderStatus.textContent = `Google 3D Tiles unavailable (${tileErrorDetail}). Loading the keyless globe...`;
-    }
-    viewer.scene.globe.show = true;
+
+  // 5. Chargement sécurisé des tuiles 3D avec Fallback automatique
+  if (loaderStatus) {
+    loaderStatus.textContent = (googleApiKey || cesiumToken)
+      ? 'Chargement de Google 3D Tiles...'
+      : 'Chargement du globe de secours...';
   }
 
-  loaderStatus.textContent = 'Initializing systems...';
+  try {
+    let loadedTileset = null;
 
-  const mapStackController = new MapController(viewer, {
-    requestRender: governorRequestRender,
-    ...mapOptions,
-    googleTileset: tileset,
-    cesiumToken,
-    initialStack: tileset ? 'photoreal' : 'esri-imagery',
-    // Task 5 (height-datum fix): rebroadcast stack changes as a window
-    // CustomEvent so data layers (CCTV per-regime ground resolution) can
-    // react without coupling MapStackController to layer modules. Fires on
-    // 'switching'/'ready'/'error'; listeners derive the surface regime from
-    // live scene state, so intermediate emissions are harmless.
-    onChange: (state) => {
-      window.dispatchEvent(
-        new CustomEvent('gev:map-stack-changed', { detail: state }),
-      );
-    },
-    onError: (message) => console.warn('[MapStack]', message),
-  });
-  defer(() => mapStackController.destroy());
-  await mapStackController.setStack(tileset ? 'photoreal' : 'esri-imagery', {
-    silent: true,
-  });
+    if (googleApiKey || cesiumToken) {
+      const photoreal = await loadPhotorealisticTileset(Cesium, {
+        googleApiKey,
+        cesiumToken,
+      });
+      if (photoreal && photoreal.tileset) {
+        loadedTileset = photoreal.tileset;
+      }
+    }
 
-  signal.throwIfAborted();
-  return { viewer, tileset, mapStackController, operations };
+    if (loadedTileset) {
+      console.log('[Init] Google 3D Tiles chargé avec succès.');
+      if (loaderStatus) loaderStatus.style.display = 'none';
+    } else {
+      throw new Error("Impossible de charger les tuiles 3D Google.");
+    }
+  } catch (error) {
+    console.warn('Google 3D Tiles indisponible (Clé 403 ou réseau). Bascule automatique sur la Terre 3D de secours.', error);
+    
+    // Activer la Terre 3D par défaut en cas d'erreur Google 403
+    viewer.scene.globe.show = true;
+    
+    if (loaderStatus) {
+      loaderStatus.textContent = 'Globe 3D actif (Mode de secours).';
+      setTimeout(() => {
+        loaderStatus.style.display = 'none';
+      }, 3000);
+    }
+  }
+
+  return viewer;
 }
