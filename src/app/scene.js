@@ -55,6 +55,27 @@ export async function createApplicationScene({
 viewer.scene.rethrowRenderErrors = false;
   viewer.useDefaultRenderLoop = true;
 
+  if (viewer.scene.renderError) {
+    viewer.scene.renderError.addEventListener((scene, error) => {
+      console.warn("Erreur de texture/tuile ignorée :", error);
+    });
+  }
+  
+  // Chargement sécurisé avec Fallback
+  try {
+    const photoreal = await loadPhotorealisticTileset(Cesium, {
+      googleApiKey,
+      cesiumToken,
+    });
+    if (photoreal && photoreal.tileset) {
+      viewer.scene.primitives.add(photoreal.tileset);
+    }
+  } catch (err) {
+    console.warn("Google 3D Tiles indisponible (403), chargement du globe par défaut...", err);
+    // Utiliser la terre 3D Cesium par défaut si Google bloque
+    viewer.scene.globe.show = true;
+  }
+
   defer(() => {
     uninstallRenderGovernor(viewer);
     if (!viewer.isDestroyed()) viewer.destroy();
