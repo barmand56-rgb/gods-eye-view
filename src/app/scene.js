@@ -60,7 +60,12 @@ viewer.scene.rethrowRenderErrors = false;
     if (!viewer.isDestroyed()) viewer.destroy();
   });
 
-  
+  if (viewer.scene.renderError) {
+    viewer.scene.renderError.addEventListener((scene, error) => {
+      console.warn("Erreur de texture ou tuile ignorée :", error);
+    });
+  }
+
   defer(installTrackpadPinchZoom(viewer));
   registerDataCredits(viewer, credits);
   configureCreditKeyboardAccess(document);

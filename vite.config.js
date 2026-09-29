@@ -14,21 +14,22 @@ export default defineConfig({
       name: 'api-handler',
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
-          // Intercepte toutes les requêtes API et diagnostics pour éviter les erreurs 404/500
-          if (
-            req.url.startsWith('/api') || 
-            req.url.includes('Diagnostics') || 
-            req.url.includes('defaults') ||
-            req.url.includes('requests')
-          ) {
+          // Intercepter UNIQUEMENT les requêtes d'API explicites vers /api
+          if (req.url.startsWith('/api')) {
             res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ 
+            return res.end(JSON.stringify({ 
               status: 'ok', 
-              summary: 'Système IA initialisé avec succès.',
+              summary: 'Système IA initialisé.',
               message: 'Données réseau synchronisées.' 
             }));
-            return;
           }
+
+          // Si le frontend cherche des requêtes de diagnostic spécifiques en JSON
+          if ((req.url.includes('Diagnostics') || req.url.includes('defaults')) && !req.url.endsWith('.js')) {
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ status: 'ok' }));
+          }
+
           next();
         });
       }
