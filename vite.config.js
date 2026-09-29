@@ -14,20 +14,19 @@ export default defineConfig({
       name: 'api-handler',
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
-          // Intercepter UNIQUEMENT les requêtes d'API explicites vers /api
-          if (req.url.startsWith('/api')) {
+          // Protéger les fichiers JS/CSS
+          if (req.url.endsWith('.js') || req.url.endsWith('.mjs') || req.url.endsWith('.css')) {
+            return next();
+          }
+
+          // Répondre aux requêtes API / HUD
+          if (req.url.startsWith('/api') || req.method === 'POST') {
             res.setHeader('Content-Type', 'application/json');
             return res.end(JSON.stringify({ 
               status: 'ok', 
-              summary: 'Système IA initialisé.',
-              message: 'Données réseau synchronisées.' 
+              summary: 'Analyse satellite active. Zone sécurisée.',
+              message: 'Système opérationnel.' 
             }));
-          }
-
-          // Si le frontend cherche des requêtes de diagnostic spécifiques en JSON
-          if ((req.url.includes('Diagnostics') || req.url.includes('defaults')) && !req.url.endsWith('.js')) {
-            res.setHeader('Content-Type', 'application/json');
-            return res.end(JSON.stringify({ status: 'ok' }));
           }
 
           next();
