@@ -1,15 +1,14 @@
 /**
- * God's Eye - Centre de Commandement Optimisé (Ultra-Rapide)
- * - Cartographie (Sombre / Satellite)
- * - Recherche Automatique de villes
- * - Suivi Aérien (✈️) & Maritime (🚢) ultra-fluide & temps réel (60 FPS)
+ * God's Eye - OSINT Command Center (Temps Réel & Contrôle de Flux Sécurisé)
  */
+
+let OPENAI_API_KEY = localStorage.getItem('osint_openai_key') || '';
 
 export async function createApplicationScene(options = {}) {
   const loaderStatus = document.querySelector('#loading-loaderStatus');
   if (loaderStatus) loaderStatus.style.display = 'none';
 
-  injectFluidStyles();
+  injectOSINTStyles();
 
   let container = document.getElementById('cesiumContainer');
   if (!container) {
@@ -21,16 +20,15 @@ export async function createApplicationScene(options = {}) {
 
   const L = window.L;
 
-  // 1. Initialisation Carte
+  // 1. Initialisation Carte Leaflet (Optimisée Canvas)
   const map = L.map('cesiumContainer', {
     center: [48.8566, 2.3522],
-    zoom: 11,
+    zoom: 14,
     zoomControl: false,
     attributionControl: false,
     preferCanvas: true
   });
 
-  // Fonds de carte : Sombre & Satellite
   const darkLayer = L.tileLayer(
     'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
     { maxZoom: 16 }
@@ -41,481 +39,566 @@ export async function createApplicationScene(options = {}) {
     { maxZoom: 18 }
   );
 
-  // Initialisation des gestionnaires tactiques
-  const flightManager = new LiveFlightManager(map, L);
-  const vesselManager = new LiveVesselManager(map, L);
+  // Groupes de calques OSINT
+  const flightGroup = L.layerGroup();
+  const vesselGroup = L.layerGroup();
+  const camGroup = L.layerGroup();
+  const businessGroup = L.layerGroup().addTo(map);
 
-  // 2. Météo automatique selon la position
-  let updateTimeout = null;
-  const updateLiveData = () => {
-    clearTimeout(updateTimeout);
-    updateTimeout = setTimeout(() => {
+  // Gestionnaires de flux avec contrôle d'état
+  const flightManager = new OSINTFlightManager(map, L, flightGroup);
+  const vesselManager = new OSINTVesselManager(map, L, vesselGroup);
+  const camManager = new OSINTCameraManager(map, L, camGroup);
+  const businessManager = new OSINTBusinessManager(map, L, businessGroup);
+
+  // Chargement initial des commerces réels de la zone
+  businessManager.fetchRealData();
+
+  // 2. Contrôleur de flux global (Anti-spam / Debounce pour les requêtes)
+  let globalUpdateTimeout = null;
+  map.on('moveend', () => {
+    clearTimeout(globalUpdateTimeout);
+    globalUpdateTimeout = setTimeout(() => {
       const center = map.getCenter();
-      fetchCityWeather(center.lat, center.lng);
-    }, 300);
-  };
+      
+      // Analyse IA de la zone
+      fetchOpenAIGeopoliticalAnalysis(center.lat, center.lng);
 
-  map.on('moveend', updateLiveData);
-  updateLiveData();
+      // Actualisation sécurisée des commerces réels si le calque est actif
+      if (businessManager.isActive) {
+        businessManager.fetchRealData();
+      }
+    }, 1200); // Délai de 1.2s pour stabiliser le flux lors du déplacement
+  });
 
-  // 3. HUD Controls & Barre de recherche
-  injectHUDControls(map, darkLayer, satelliteLayer, flightManager, vesselManager);
+  // Analyse initiale IA
+  fetchOpenAIGeopoliticalAnalysis(48.8566, 2.3522);
 
-  // Interface de compatibilité Cesium
-  const dummySurface = { globe: {}, enableLighting: false, show: true, update: () => {} };
+  // 3. Injection du Menu Déroulant & HUD OSINT Global
+  injectOSINTDropdownMenu(map, darkLayer, satelliteLayer, flightManager, vesselManager, camManager, businessManager);
+
   return {
     viewer: map,
-    scene: { surface: dummySurface, globe: dummySurface, camera: { flyTo: () => {}, flyHome: () => map.flyTo([20, 0], 3) } },
+    scene: { camera: { flyHome: () => map.flyTo([48.8566, 2.3522], 14) } },
     map,
     destroy: () => {
       flightManager.stop();
       vesselManager.stop();
+      businessManager.stop();
       map.remove();
     }
   };
 }
 
 /**
- * 🎨 STYLES CSS OPTIMISÉS
+ * 🎨 STYLES CSS
  */
-function injectFluidStyles() {
-  if (document.getElementById('live-tactical-styles')) return;
+function injectOSINTStyles() {
+  if (document.getElementById('osint-styles')) return;
   const style = document.createElement('style');
-  style.id = 'live-tactical-styles';
+  style.id = 'osint-styles';
   style.innerHTML = `
-    .leaflet-marker-icon.smooth-tactical-icon { transition: transform 0.1s linear !important; }
-    .tactical-icon-inner { transition: transform 0.1s linear; display: inline-block; cursor: pointer; }
-    .vessel-icon { filter: drop-shadow(0 0 5px #38bdf8); }
-    .plane-icon { filter: drop-shadow(0 0 5px #00e5ff); }
-    .tactical-icon-inner:hover { transform: scale(1.3) !important; filter: drop-shadow(0 0 10px #00ffcc) !important; }
+    .osint-dot { border-radius: 50%; box-shadow: 0 0 8px currentColor; cursor: pointer; transition: transform 0.2s; }
+    .osint-dot:hover { transform: scale(1.6); z-index: 1000 !important; }
+    .dot-flight-civ { background: #00e5ff; color: #00e5ff; width: 8px; height: 8px; }
+    .dot-flight-mil { background: #ff3333; color: #ff3333; width: 10px; height: 10px; border: 1px solid #fff; }
+    .dot-vessel-civ { background: #38bdf8; color: #38bdf8; width: 8px; height: 8px; }
+    .dot-vessel-mil { background: #ffaa00; color: #ffaa00; width: 10px; height: 10px; border: 1px solid #fff; }
+    .dot-cam { background: #10b981; color: #10b981; width: 10px; height: 10px; }
+    .dot-business { background: #ec4899; color: #ec4899; width: 10px; height: 10px; border: 1px solid #fff; }
+
+    #osint-ai-panel {
+      position: fixed; bottom: 20px; left: 20px; width: 380px; z-index: 1000;
+      background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(0, 255, 204, 0.4); border-radius: 6px;
+      padding: 12px; color: #cbd5e1; font-family: monospace; font-size: 11px;
+      backdrop-filter: blur(8px); box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      max-height: 220px; overflow-y: auto;
+    }
+
+    .osint-dropdown-container {
+      position: fixed; top: 20px; right: 20px; z-index: 1000;
+      font-family: monospace; font-size: 12px;
+    }
+    .osint-menu-toggle {
+      background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(0, 255, 204, 0.4);
+      color: #00ffcc; padding: 10px 16px; border-radius: 6px; cursor: pointer;
+      display: flex; align-items: center; justify-content: space-between; width: 260px;
+      backdrop-filter: blur(8px); box-shadow: 0 4px 12px rgba(0,0,0,0.4); transition: background 0.2s;
+    }
+    .osint-menu-toggle:hover { background: rgba(30, 41, 59, 0.95); }
+    
+    .osint-menu-content {
+      display: none; position: absolute; right: 0; top: 45px; width: 260px;
+      background: rgba(15, 23, 42, 0.96); border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px; padding: 8px; backdrop-filter: blur(10px);
+      box-shadow: 0 10px 25px rgba(0,0,0,0.6);
+    }
+    .osint-menu-content.open { display: block; }
+    
+    .osint-menu-item {
+      padding: 8px 10px; color: #94a3b8; cursor: pointer; border-radius: 4px;
+      display: flex; align-items: center; justify-content: space-between; transition: all 0.2s;
+      margin-bottom: 2px;
+    }
+    .osint-menu-item:hover { background: rgba(255, 255, 255, 0.05); color: #fff; }
+    .osint-menu-item.active { color: #00ffcc; background: rgba(0, 255, 204, 0.08); font-weight: bold; }
+    .osint-divider { height: 1px; background: rgba(255, 255, 255, 0.08); margin: 6px 0; }
   `;
   document.head.appendChild(style);
 }
 
 /**
- * 🛡️ CLASSE PARENT UNIFIÉE (60 FPS / Animation Frame)
+ * 🍔 GESTIONNAIRE DE FONDS DE COMMERCE - TEMPS RÉEL (OpenStreetMap / Overpass API)
+ * Sécurisé avec AbortController pour éviter les chevauchements et requêtes multiples concurrentes.
  */
-class TacticalEntityManager {
-  constructor(map, L, options) {
+class OSINTBusinessManager {
+  constructor(map, L, group) {
     this.map = map;
     this.L = L;
-    this.type = options.type;
-    this.color = options.color;
-    this.emoji = options.emoji;
-    this.layer = L.layerGroup();
-    this.trajectoryLayer = L.layerGroup();
-    this.isActive = false;
-    this.animationFrameId = null;
-    this.lastTime = null;
-    this.markersMap = new Map();
-    this.entities = [];
-    this.selected = null;
+    this.group = group;
+    this.isActive = true;
+    this.markers = new Map();
+    this.abortController = null;
+    this.isFetching = false;
   }
 
   toggle() {
     this.isActive = !this.isActive;
     if (this.isActive) {
-      this.map.addLayer(this.layer);
-      this.map.addLayer(this.trajectoryLayer);
       this.start();
     } else {
       this.stop();
-      this.map.removeLayer(this.layer);
-      this.map.removeLayer(this.trajectoryLayer);
-      this.clear();
-      DetailPanel.hide();
-      updateWidgetStat(this.type === 'flight' ? 'flights' : 'vessels', 'Désactivé');
     }
     return this.isActive;
   }
 
   start() {
-    this.generateData();
-    this.lastTime = performance.now();
-    const loop = (time) => {
-      if (!this.isActive) return;
-      const dt = (time - this.lastTime) / 1000;
-      this.lastTime = time;
-      this.step(dt);
-      this.animationFrameId = requestAnimationFrame(loop);
-    };
-    this.animationFrameId = requestAnimationFrame(loop);
+    this.map.addLayer(this.group);
+    this.fetchRealData();
   }
 
   stop() {
-    if (this.animationFrameId) {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
+    if (this.abortController) this.abortController.abort();
+    this.map.removeLayer(this.group);
+    this.clearMarkers();
+  }
+
+  clearMarkers() {
+    this.group.clearLayers();
+    this.markers.clear();
+  }
+
+  async fetchRealData() {
+    if (!this.isActive || this.isFetching) return;
+
+    const bounds = this.map.getBounds();
+    const south = bounds.getSouth();
+    const west = bounds.getWest();
+    const north = bounds.getNorth();
+    const east = bounds.getEast();
+
+    // Annulation de la requête précédente si elle est encore en cours
+    if (this.abortController) {
+      this.abortController.abort();
     }
-  }
+    this.abortController = new AbortController();
+    this.isFetching = true;
 
-  clear() {
-    this.layer.clearLayers();
-    this.trajectoryLayer.clearLayers();
-    this.markersMap.clear();
-    this.entities = [];
-  }
+    // Requête Overpass API pour récupérer de vrais restaurants/cafés/bars dans la zone visible
+    const query = `
+      [out:json][timeout:10];
+      (
+        node["amenity"~"restaurant|cafe|bar|pub|fast_food"](${south},${west},${north},${east});
+        way["amenity"~"restaurant|cafe|bar|pub|fast_food"](${south},${west},${north},${east});
+      );
+      out center 40;
+    `;
 
-  step(dt) {
-    if (!dt || dt > 1) dt = 0.016;
+    try {
+      const response = await fetch('https://overpass-api.de/api/interpreter', {
+        method: 'POST',
+        body: query,
+        signal: this.abortController.signal
+      });
 
-    this.entities.forEach(e => {
-      // Calcul déplacement ultra-réactif selon dt
-      const distKm = (e.speed / 3600) * dt * 5; // Multiplicateur de vitesse pour animation fluide
-      const rad = (e.heading * Math.PI) / 180;
-      e.lat += (distKm / 111) * Math.cos(rad);
-      e.lon += (distKm / (111 * Math.cos((e.lat * Math.PI) / 180))) * Math.sin(rad);
-    });
+      if (!response.ok) throw new Error('Erreur réseau Overpass API');
 
-    this.renderMarkers();
+      const data = await response.json();
+      this.clearMarkers();
 
-    if (this.selected) {
-      const updated = this.entities.find(e => e.key === this.selected.key);
-      if (updated) {
-        this.selected = updated;
-        DetailPanel.update(updated, this.color, this.map);
-        this.drawTrajectory(updated);
+      data.elements.forEach((el, index) => {
+        const lat = el.lat || (el.center && el.center.lat);
+        const lon = el.lon || (el.center && el.center.lon);
+        if (!lat || !lon) return;
+
+        const name = (el.tags && el.tags.name) ? el.tags.name : `Établissement #${index + 1}`;
+        const amenity = el.tags && el.tags.amenity ? el.tags.amenity.toUpperCase() : 'RESTAURATION';
+
+        const entity = {
+          id: `OSM-BIZ-${el.id || index}`,
+          title: name,
+          category: `OSM / ${amenity}`,
+          origin: `${Math.floor(Math.random() * 350 + 150)} 000 €`, // Simulation financière réaliste indexée
+          destination: `${Math.floor(Math.random() * 2000 + 1000)} € / mois`,
+          pilot: `${Math.floor(Math.random() * 300 + 100)} 000 €`,
+          licence: 'Vérifiée OpenStreetMap',
+          cover: 'Point d\'intérêt réel indexé - Couverture potentielle de terrain',
+          lat,
+          lon
+        };
+
+        const icon = this.L.divIcon({ className: 'osint-dot dot-business', iconSize: [10, 10] });
+        const marker = this.L.marker([lat, lon], { icon }).on('click', () => OSINTDetailPanel.showBusiness(entity));
+        
+        this.markers.set(entity.id, marker);
+        this.group.addLayer(marker);
+      });
+    } catch (error) {
+      if (error.name !== 'AbortError') {
+        console.warn('Flux Overpass temporairement indisponible ou limité:', error);
       }
+    } finally {
+      this.isFetching = false;
     }
-  }
-
-  renderMarkers() {
-    const activeKeys = new Set(this.entities.map(e => e.key));
-
-    this.entities.forEach(e => {
-      if (this.markersMap.has(e.key)) {
-        const marker = this.markersMap.get(e.key);
-        marker.setLatLng([e.lat, e.lon]);
-        const iconEl = marker.getElement()?.querySelector('.tactical-icon-inner');
-        if (iconEl) iconEl.style.transform = `rotate(${e.heading}deg)`;
-      } else {
-        const icon = this.L.divIcon({
-          className: 'smooth-tactical-icon',
-          html: `<div class="tactical-icon-inner ${this.type}-icon" style="transform:rotate(${e.heading}deg); font-size:20px;">${this.emoji}</div>`,
-          iconSize: [24, 24],
-          iconAnchor: [12, 12]
-        });
-
-        const marker = this.L.marker([e.lat, e.lon], { icon }).on('click', () => this.select(e));
-        this.markersMap.set(e.key, marker);
-        this.layer.addLayer(marker);
-      }
-    });
-
-    for (const [key, marker] of this.markersMap.entries()) {
-      if (!activeKeys.has(key)) {
-        this.layer.removeLayer(marker);
-        this.markersMap.delete(key);
-      }
-    }
-  }
-
-  select(entity) {
-    this.selected = entity;
-    this.map.panTo([entity.lat, entity.lon], { animate: true, duration: 0.3 });
-    DetailPanel.update(entity, this.color, this.map);
-    this.drawTrajectory(entity);
-  }
-
-  drawTrajectory(e) {
-    this.trajectoryLayer.clearLayers();
-    const rad = (e.heading * Math.PI) / 180;
-    const projectDistKm = (e.speed / 3600) * 180;
-    const endLat = e.lat + (projectDistKm / 111) * Math.cos(rad);
-    const endLon = e.lon + (projectDistKm / (111 * Math.cos((e.lat * Math.PI) / 180))) * Math.sin(rad);
-
-    const line = this.L.polyline([[e.lat, e.lon], [endLat, endLon]], {
-      color: this.color, weight: 2, dashArray: '5, 8', opacity: 0.8
-    });
-    this.trajectoryLayer.addLayer(line);
   }
 }
 
 /**
- * 🚢 BATEAUX
+ * ✈️ GESTIONNAIRE DES VOLS (Sécurisé et contrôlé)
  */
-class LiveVesselManager extends TacticalEntityManager {
-  constructor(map, L) {
-    super(map, L, { type: 'vessel', color: '#38bdf8', emoji: '🚢' });
+class OSINTFlightManager {
+  constructor(map, L, group) {
+    this.map = map; this.L = L; this.group = group; this.isActive = false; this.timer = null; this.entities = []; this.markers = new Map();
   }
-
-  generateData() {
+  toggle() {
+    this.isActive = !this.isActive;
+    if (this.isActive) { this.start(); this.map.addLayer(this.group); } 
+    else { this.stop(); this.map.removeLayer(this.group); this.group.clearLayers(); this.markers.clear(); }
+    return this.isActive;
+  }
+  start() {
+    this.generate();
+    this.timer = setInterval(() => this.step(), 1500);
+  }
+  stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
+  generate() {
     const b = this.map.getBounds();
-    const names = ["MSC OSCAR", "CMA CGM ANTOINE", "EVER GIVEN", "MAERSK MC-KINNEY", "BLACK PEARL", "NAUTILUS II"];
-    const types = ["Porte-conteneurs", "Pétrolier VLCC", "Vraquier", "Paquebot", "Cargo"];
-
     this.entities = Array.from({ length: 12 }, (_, i) => ({
-      key: `VESSEL-${i}`,
-      title: names[i % names.length],
-      subTitle: types[i % types.length],
-      origin: "Le Havre (FR)",
-      destination: "Rotterdam (NL)",
-      captain: "Cpt. Jean Le Cam",
-      speed: Math.round((12 + Math.random() * 15) * 1.852),
-      speedText: `${Math.round(12 + Math.random() * 15)} kts`,
-      heading: Math.floor(Math.random() * 360),
-      extraLabel: "TIRANT D'EAU",
-      extraValue: `${(6 + Math.random() * 6).toFixed(1)} m`,
+      id: `FLT-${i}`, type: i % 5 === 0 ? 'mil' : 'civ',
+      title: i % 5 === 0 ? `BOMBER-TU95-${10 + i}` : `AEROFLOT-${100 + i}`,
+      category: i % 5 === 0 ? 'Bombardier' : 'Ligne Civile',
+      origin: 'Mourmansk', destination: 'Cuba', pilot: 'Colonel Ivan',
+      speed: 950, heading: Math.floor(Math.random() * 360),
       lat: b.getSouth() + Math.random() * (b.getNorth() - b.getSouth()),
       lon: b.getWest() + Math.random() * (b.getEast() - b.getWest())
     }));
-
-    this.renderMarkers();
-    updateWidgetStat('vessels', `${this.entities.length} navires actifs (Temps Réel)`);
+  }
+  step() {
+    if (!this.isActive) return;
+    this.entities.forEach(e => {
+      const dist = (e.speed / 3600) * 1.5;
+      const rad = (e.heading * Math.PI) / 180;
+      e.lat += (dist / 111) * Math.cos(rad);
+      e.lon += (dist / (111 * Math.cos((e.lat * Math.PI) / 180))) * Math.sin(rad);
+      if (this.markers.has(e.id)) {
+        this.markers.get(e.id).setLatLng([e.lat, e.lon]);
+      } else {
+        const className = e.type === 'mil' ? 'osint-dot dot-flight-mil' : 'osint-dot dot-flight-civ';
+        const icon = this.L.divIcon({ className, iconSize: [10, 10] });
+        const marker = this.L.marker([e.lat, e.lon], { icon }).on('click', () => OSINTDetailPanel.show(e));
+        this.markers.set(e.id, marker);
+        this.group.addLayer(marker);
+      }
+    });
   }
 }
 
 /**
- * ✈️ VOLS
+ * 🚢 GESTIONNAIRE DES NAVIRES (Sécurisé et contrôlé)
  */
-class LiveFlightManager extends TacticalEntityManager {
-  constructor(map, L) {
-    super(map, L, { type: 'flight', color: '#00e5ff', emoji: '✈️' });
+class OSINTVesselManager {
+  constructor(map, L, group) {
+    this.map = map; this.L = L; this.group = group; this.isActive = false; this.timer = null; this.entities = []; this.markers = new Map();
   }
-
-  generateData() {
+  toggle() {
+    this.isActive = !this.isActive;
+    if (this.isActive) { this.start(); this.map.addLayer(this.group); }
+    else { this.stop(); this.map.removeLayer(this.group); this.group.clearLayers(); this.markers.clear(); }
+    return this.isActive;
+  }
+  start() {
+    this.generate();
+    this.timer = setInterval(() => this.step(), 2000);
+  }
+  stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
+  generate() {
     const b = this.map.getBounds();
-    const airlines = ["Air France", "Lufthansa", "British Airways", "Emirates"];
-
-    this.entities = Array.from({ length: 14 }, (_, i) => ({
-      key: `FLIGHT-${i}`,
-      title: `AFR-${100 + i}`,
-      subTitle: airlines[i % airlines.length],
-      origin: "Paris (CDG)",
-      destination: "Nice (NCE)",
-      captain: "Cpt. Marc Dubois",
-      speed: 750 + Math.floor(Math.random() * 150),
-      speedText: `${750 + Math.floor(Math.random() * 150)} km/h`,
-      heading: Math.floor(Math.random() * 360),
-      extraLabel: "ALTITUDE",
-      extraValue: `${(7000 + Math.floor(Math.random() * 4000)).toLocaleString()} m`,
+    this.entities = Array.from({ length: 10 }, (_, i) => ({
+      id: `VES-${i}`, type: i % 4 === 0 ? 'mil' : 'civ',
+      title: i % 4 === 0 ? `SSBN-TYPHOON-${20 + i}` : `TRAWLER-${i}`,
+      category: i % 4 === 0 ? 'Sous-marin' : 'Chalutier',
+      origin: 'Polyarny', destination: 'Barents', pilot: 'Capitaine Marko',
+      speed: 25, heading: Math.floor(Math.random() * 360),
       lat: b.getSouth() + Math.random() * (b.getNorth() - b.getSouth()),
       lon: b.getWest() + Math.random() * (b.getEast() - b.getWest())
     }));
-
-    this.renderMarkers();
-    updateWidgetStat('flights', `${this.entities.length} vols actifs (Temps Réel)`);
+  }
+  step() {
+    if (!this.isActive) return;
+    this.entities.forEach(e => {
+      const dist = (e.speed * 1.852 / 3600) * 2;
+      const rad = (e.heading * Math.PI) / 180;
+      e.lat += (dist / 111) * Math.cos(rad);
+      e.lon += (dist / (111 * Math.cos((e.lat * Math.PI) / 180))) * Math.sin(rad);
+      if (this.markers.has(e.id)) {
+        this.markers.get(e.id).setLatLng([e.lat, e.lon]);
+      } else {
+        const className = e.type === 'mil' ? 'osint-dot dot-vessel-mil' : 'osint-dot dot-vessel-civ';
+        const icon = this.L.divIcon({ className, iconSize: [10, 10] });
+        const marker = this.L.marker([e.lat, e.lon], { icon }).on('click', () => OSINTDetailPanel.show(e));
+        this.markers.set(e.id, marker);
+        this.group.addLayer(marker);
+      }
+    });
   }
 }
 
 /**
- * 🎛️ PANNEAU DE DÉTAILS DYNAMIQUE
+ * 📷 GESTIONNAIRE DES CAMÉRAS ET POSTES
  */
-const DetailPanel = {
+class OSINTCameraManager {
+  constructor(map, L, group) {
+    this.map = map; this.L = L; this.group = group; this.isActive = false;
+  }
+  toggle() {
+    this.isActive = !this.isActive;
+    if (this.isActive) {
+      const cams = [
+        { name: "Checkpoint Charlie", lat: 52.5074, lon: 13.3904, res: "Infrarouge" },
+        { name: "Silo Nucléaire Montana", lat: 46.9653, lon: -109.5337, res: "Optique" }
+      ];
+      cams.forEach(c => {
+        const icon = this.L.divIcon({ className: 'osint-dot dot-cam', iconSize: [12, 12] });
+        const marker = this.L.marker([c.lat, c.lon], { icon }).bindPopup(`<strong>🎥 ${c.name}</strong>`);
+        this.group.addLayer(marker);
+      });
+      this.map.addLayer(this.group);
+    } else {
+      this.map.removeLayer(this.group);
+      this.group.clearLayers();
+    }
+    return this.isActive;
+  }
+}
+
+/**
+ * 🤖 MODULE D'ANALYSE OPENAI CONTRÔLÉ
+ */
+async function fetchOpenAIGeopoliticalAnalysis(lat, lon) {
+  let panel = document.getElementById('osint-ai-panel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'osint-ai-panel';
+    document.body.appendChild(panel);
+  }
+
+  if (!OPENAI_API_KEY) {
+    OPENAI_API_KEY = prompt("Entrez votre clé OpenAI pour activer le terminal :");
+    if (OPENAI_API_KEY) {
+      localStorage.setItem('osint_openai_key', OPENAI_API_KEY);
+    } else {
+      panel.innerHTML = `<div style="color:#ff3333;">⚠ Clé manquante.</div>`;
+      return;
+    }
+  }
+
+  panel.innerHTML = `
+    <div style="color:#00ffcc; font-weight:bold; margin-bottom:4px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:4px;">
+      🧠 STRATCOM - ANALYSE EN COURS...
+    </div>
+    <div style="color:#94a3b8;">📡 Analyse flux réels [Lat: ${lat.toFixed(2)}, Lon: ${lon.toFixed(2)}]...</div>
+  `;
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `Tu es un superordinateur militaire de la Guerre froide couplé à un analyste en fonds de commerce réels. 
+            Ton ton est cynique, paranoïaque (DEFCON, espions, rideau de fer) tout en commentant avec humour les commerces de restauration locaux indexés.
+            - Toujours en français.
+            - 3 ou 4 lignes maximum.`
+          },
+          {
+            role: "user",
+            content: `Rapport de situation pour le secteur Latitude: ${lat}, Longitude: ${lon}.`
+          }
+        ],
+        max_tokens: 150
+      })
+    });
+
+    const data = await response.json();
+    if (data.choices && data.choices.length > 0) {
+      const analysisText = data.choices[0].message.content;
+      panel.innerHTML = `
+        <div style="color:#00ffcc; font-weight:bold; margin-bottom:4px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:4px; display:flex; justify-content:space-between;">
+          <span>🧠 RAPPORT STRATCOM & COMMERCE</span>
+          <span style="cursor:pointer; color:#94a3b8;" onclick="localStorage.removeItem('osint_openai_key'); location.reload();" title="Changer de clé">⚙️</span>
+        </div>
+        <div>📍 <strong>Secteur :</strong> ${lat.toFixed(2)}, ${lon.toFixed(2)}</div>
+        <div style="margin-top:6px; color:#f8fafc; line-height:1.4;">${analysisText}</div>
+      `;
+    }
+  } catch (error) {
+    panel.innerHTML = `<div style="color:#ff3333; font-weight:bold;">⚠️ Erreur de liaison</div>`;
+  }
+}
+
+/**
+ * 🎛️ PANNEAU DE DÉTAILS UNIFIÉ ET SÉCURISÉ
+ */
+const OSINTDetailPanel = {
   el: null,
-  init() {
-    if (this.el) return;
-    this.el = document.createElement('div');
-    this.el.id = 'tactical-detail-panel';
-    this.el.style.cssText = `
-      position: fixed; top: 80px; right: 20px; z-index: 1100; display: none;
-      width: 300px; background: rgba(9, 13, 22, 0.94); border: 1px solid #00ffcc;
-      border-radius: 8px; padding: 14px; color: #fff; font-family: monospace;
-      backdrop-filter: blur(10px); box-shadow: 0 10px 25px rgba(0,0,0,0.5);
-    `;
-    this.el.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #334155; padding-bottom:6px; margin-bottom:8px;">
-        <span id="dp-title" style="font-weight:bold; font-size:14px;"></span>
-        <button id="dp-close" style="background:none; border:none; color:#94a3b8; font-size:16px; cursor:pointer;">✕</button>
-      </div>
-      <div style="background:#020617; border:1px solid #1e293b; padding:8px; border-radius:6px; text-align:center; margin-bottom:8px; font-size:11px;">
-        <span id="dp-origin" style="color:#00ffcc;"></span> ➔ <span id="dp-dest" style="color:#ffaa00;"></span>
-      </div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:10px; margin-bottom:8px;">
-        <div style="background:#0f172a; padding:6px; border-radius:4px;"><span style="color:#94a3b8; display:block;">CATÉGORIE</span><strong id="dp-sub"></strong></div>
-        <div style="background:#0f172a; padding:6px; border-radius:4px;"><span style="color:#94a3b8; display:block;">COMMANDANT</span><strong id="dp-captain" style="color:#00ffcc;"></strong></div>
-        <div style="background:#0f172a; padding:6px; border-radius:4px;"><span style="color:#94a3b8; display:block;">VITESSE</span><strong id="dp-speed"></strong></div>
-        <div style="background:#0f172a; padding:6px; border-radius:4px;"><span id="dp-extralabel" style="color:#94a3b8; display:block;"></span><strong id="dp-extraval"></strong></div>
-      </div>
-      <button id="dp-track" style="width:100%; background:#00ffcc; color:#020617; border:none; padding:6px; border-radius:4px; font-weight:bold; cursor:pointer;">🎯 SUIVRE L'OBJECTIF</button>
-    `;
-    document.body.appendChild(this.el);
-    document.getElementById('dp-close').onclick = () => this.hide();
+  show(e) {
+    this.render(`
+      <span style="font-weight:bold; color:#ff3333;">🎯 CIBLE: ${e.id}</span>
+      <div><strong>Nom :</strong> ${e.title}</div>
+      <div><strong>Classe :</strong> ${e.category}</div>
+      <div><strong>Origine :</strong> ${e.origin}</div>
+      <div><strong>Destination :</strong> ${e.destination}</div>
+      <div><strong>Opérateur :</strong> <span style="color:#00ffcc;">${e.pilot}</span></div>
+      <div><strong>Vitesse :</strong> ${e.speed} nœuds</div>
+    `);
   },
-
-  update(e, color, map) {
-    this.init();
-    this.el.style.borderColor = color;
+  showBusiness(e) {
+    this.render(`
+      <span style="font-weight:bold; color:#ec4899;">🍔 COMMERCE RÉEL: ${e.id}</span>
+      <div><strong>Établissement :</strong> ${e.title}</div>
+      <div><strong>Type :</strong> ${e.category}</div>
+      <div><strong>CA Estimé :</strong> <span style="color:#00ffcc;">${e.origin}</span></div>
+      <div><strong>Loyer Indicatif :</strong> ${e.destination}</div>
+      <div style="margin-top:4px; color:#94a3b8; font-style:italic;">Note OSINT : ${e.cover}</div>
+    `);
+  },
+  render(content) {
+    if (!this.el) {
+      this.el = document.createElement('div');
+      this.el.id = 'osint-detail-card';
+      this.el.style.cssText = `
+        position: fixed; top: 80px; right: 280px; z-index: 1100;
+        width: 310px; background: rgba(15, 23, 42, 0.96); border: 1px solid rgba(0, 255, 204, 0.4);
+        border-radius: 6px; padding: 12px; color: #fff; font-family: monospace; font-size: 11px;
+        backdrop-filter: blur(10px); box-shadow: 0 10px 25px rgba(0,0,0,0.7);
+      `;
+      document.body.appendChild(this.el);
+    }
     this.el.style.display = 'block';
-
-    document.getElementById('dp-title').textContent = `${e.emoji || ''} ${e.title}`;
-    document.getElementById('dp-title').style.color = color;
-    document.getElementById('dp-origin').textContent = e.origin;
-    document.getElementById('dp-dest').textContent = e.destination;
-    document.getElementById('dp-sub').textContent = e.subTitle;
-    document.getElementById('dp-captain').textContent = e.captain;
-    document.getElementById('dp-speed').textContent = e.speedText;
-    document.getElementById('dp-extralabel').textContent = e.extraLabel;
-    document.getElementById('dp-extraval').textContent = e.extraValue;
-
-    const trackBtn = document.getElementById('dp-track');
-    trackBtn.style.background = color;
-    trackBtn.onclick = () => map.flyTo([e.lat, e.lon], 13, { duration: 0.5 });
-  },
-
-  hide() {
-    if (this.el) this.el.style.display = 'none';
+    this.el.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:4px; margin-bottom:6px;">
+        ${content.split('<div>')[0]}
+        <button onclick="document.getElementById('osint-detail-card').style.display='none'" style="background:none; border:none; color:#94a3b8; cursor:pointer;">✕</button>
+      </div>
+      <div style="line-height:1.4;">
+        ${content.split('<div>').slice(1).join('<div>')}
+      </div>
+    `;
   }
 };
 
 /**
- * 🌤 MÉTÉO RÉELLE
+ * 📂 MENU DÉROULANT DU COMMANDEMENT
  */
-async function fetchCityWeather(lat, lon) {
-  try {
-    const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`);
-    const data = await res.json();
-    if (data.current_weather) {
-      updateCityWidget({ temp: `${data.current_weather.temperature}°C`, wind: `${data.current_weather.windspeed} km/h` });
-    }
-  } catch (e) {}
-}
+function injectOSINTDropdownMenu(map, darkLayer, satelliteLayer, flightManager, vesselManager, camManager, businessManager) {
+  if (document.getElementById('osint-menu-container')) return;
 
-/**
- * 📊 WIDGET HUD TACTIQUE EN BAS À GAUCHE
- */
-function updateCityWidget(data) {
-  let widget = document.getElementById('city-live-widget');
-  if (!widget) {
-    widget = document.createElement('div');
-    widget.id = 'city-live-widget';
-    widget.style.cssText = `
-      position: fixed; bottom: 20px; left: 20px; z-index: 1000;
-      background: rgba(10, 16, 29, 0.92); border: 1px solid #00ffcc;
-      border-radius: 8px; padding: 10px 14px; color: #fff;
-      font-family: monospace; font-size: 12px; backdrop-filter: blur(8px);
-    `;
-    document.body.appendChild(widget);
-  }
-  widget.innerHTML = `
-    <div style="color:#00ffcc; font-weight:bold; margin-bottom:4px;">🔴 FLUX TACTIQUE EN DIRECT</div>
-    <div>🌡️ Temp : ${data.temp} | 💨 Vent : ${data.wind}</div>
-    <div>✈️ Traffic Aérien : <span id="widget-flights" style="color:#00e5ff;">Désactivé</span></div>
-    <div>🚢 Traffic Maritime : <span id="widget-vessels" style="color:#38bdf8;">Désactivé</span></div>
-  `;
-}
-
-function updateWidgetStat(id, text) {
-  const el = document.getElementById(`widget-${id}`);
-  if (el) el.innerText = text;
-}
-
-/**
- * 🎛️ HUD - MENU DE COMMANDEMENT & RECHERCHE DE VILLE
- */
-function injectHUDControls(map, darkLayer, satelliteLayer, flightManager, vesselManager) {
-  if (document.getElementById('hud-country-menu')) return;
-
-  const hudMenu = document.createElement('div');
-  hudMenu.id = 'hud-country-menu';
-  hudMenu.innerHTML = `
-    <div class="hud-panel">
-      <div class="hud-header">
-        <span>🎖️ GOD'S EYE - LIVE COMMAND</span>
-        <button id="hud-toggle-btn">☰</button>
-      </div>
-      <div class="hud-body" id="hud-body">
-        
-        <div class="hud-section">
-          <label>🔍 ALLER DANS UNE VILLE</label>
-          <div style="display:flex; gap:5px; margin-top:5px;">
-            <input type="text" id="hud-search-input" placeholder="ex: Paris, Tokyo, Miami..." style="flex:1; background:#0a101d; border:1px solid #00ffcc; color:#fff; padding:6px; border-radius:4px; font-family:monospace;" />
-            <button id="hud-search-btn" class="hud-btn highlight" style="padding:0 10px;">🔎</button>
-          </div>
-        </div>
-
-        <div class="hud-section">
-          <label>🎨 STYLE DE CARTE</label>
-          <div class="hud-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:5px;">
-            <button class="hud-btn highlight" id="btn-style-dark">🕶️ Sombre</button>
-            <button class="hud-btn" id="btn-style-sat">🛰️ Satellite</button>
-          </div>
-        </div>
-
-        <div class="hud-section">
-          <label>📡 CALQUES TACTIQUES</label>
-          <div class="hud-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:5px;">
-            <button class="hud-btn" id="btn-toggle-flights">✈️ Vols</button>
-            <button class="hud-btn" id="btn-toggle-vessels">🚢 Bateaux</button>
-          </div>
-        </div>
-
-        <div class="hud-section" style="margin-top:10px;">
-          <button class="hud-btn highlight" id="btn-reset-view" style="width:100%;">🎯 Vue Globale</button>
-        </div>
-
-      </div>
+  const container = document.createElement('div');
+  container.id = 'osint-menu-container';
+  container.className = 'osint-dropdown-container';
+  container.innerHTML = `
+    <div class="osint-menu-toggle" id="osintToggleBtn">
+      <span>⚙️ Menu OSINT (Temps Réel)</span>
+      <span id="osintChevron">▼</span>
+    </div>
+    <div class="osint-menu-content" id="osintMenuContent">
+      <div class="osint-menu-item active" id="item-business">🍔 Fonds de Commerce (Réel) <span>🟢</span></div>
+      <div class="osint-menu-item" id="item-flights">✈️ Trafic Aérien <span>⚫</span></div>
+      <div class="osint-menu-item" id="item-vessels">🚢 Trafic Maritime <span>⚫</span></div>
+      <div class="osint-menu-item" id="item-cams">📷 Postes & Caméras <span>⚫</span></div>
+      <div class="osint-divider"></div>
+      <div class="osint-menu-item active" id="item-dark">🕶️ Vue Sombre Tactique</div>
+      <div class="osint-menu-item" id="item-sat">🛰️ Vue Satellite Globale</div>
     </div>
   `;
+  document.body.appendChild(container);
 
-  document.body.appendChild(hudMenu);
+  const toggleBtn = document.getElementById('osintToggleBtn');
+  const menuContent = document.getElementById('osintMenuContent');
+  const chevron = document.getElementById('osintChevron');
 
-  // Toggle du menu HUD
-  document.getElementById('hud-toggle-btn')?.addEventListener('click', () => {
-    document.getElementById('hud-body')?.classList.toggle('collapsed');
-  });
-
-  // Recherche automatique de ville
-  const executeSearch = async () => {
-    const input = document.getElementById('hud-search-input');
-    const query = input?.value?.trim();
-    if (!query) return;
-
-    try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
-      const data = await res.json();
-      if (data && data.length > 0) {
-        const { lat, lon } = data[0];
-        map.flyTo([parseFloat(lat), parseFloat(lon)], 12, { duration: 1.5 });
-      } else {
-        alert("Ville non trouvée. Essayez une autre ville.");
-      }
-    } catch (err) {
-      console.warn("Erreur de recherche :", err);
-    }
+  toggleBtn.onclick = (e) => {
+    e.stopPropagation();
+    const isOpen = menuContent.classList.toggle('open');
+    chevron.textContent = isOpen ? '▲' : '▼';
   };
 
-  document.getElementById('hud-search-btn')?.addEventListener('click', executeSearch);
-  document.getElementById('hud-search-input')?.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') executeSearch();
+  window.addEventListener('click', () => {
+    menuContent.classList.remove('open');
+    chevron.textContent = '▼';
   });
 
-  // Basculement de style : Carte Sombre / Satellite
-  const btnDark = document.getElementById('btn-style-dark');
-  const btnSat = document.getElementById('btn-style-sat');
+  document.getElementById('item-business').onclick = () => {
+    const active = businessManager.toggle();
+    const item = document.getElementById('item-business');
+    item.classList.toggle('active', active);
+    item.querySelector('span').textContent = active ? '🟢' : '⚫';
+  };
 
-  btnDark?.addEventListener('click', () => {
+  document.getElementById('item-flights').onclick = () => {
+    const active = flightManager.toggle();
+    const item = document.getElementById('item-flights');
+    item.classList.toggle('active', active);
+    item.querySelector('span').textContent = active ? '🟢' : '⚫';
+  };
+
+  document.getElementById('item-vessels').onclick = () => {
+    const active = vesselManager.toggle();
+    const item = document.getElementById('item-vessels');
+    item.classList.toggle('active', active);
+    item.querySelector('span').textContent = active ? '🟢' : '⚫';
+  };
+
+  document.getElementById('item-cams').onclick = () => {
+    const active = camManager.toggle();
+    const item = document.getElementById('item-cams');
+    item.classList.toggle('active', active);
+    item.querySelector('span').textContent = active ? '🟢' : '⚫';
+  };
+
+  document.getElementById('item-dark').onclick = () => {
     if (map.hasLayer(satelliteLayer)) map.removeLayer(satelliteLayer);
     if (!map.hasLayer(darkLayer)) map.addLayer(darkLayer);
-    btnDark.classList.add('highlight');
-    btnSat?.classList.remove('highlight');
-  });
+    document.getElementById('item-dark').classList.add('active');
+    document.getElementById('item-sat').classList.remove('active');
+  };
 
-  btnSat?.addEventListener('click', () => {
+  document.getElementById('item-sat').onclick = () => {
     if (map.hasLayer(darkLayer)) map.removeLayer(darkLayer);
     if (!map.hasLayer(satelliteLayer)) map.addLayer(satelliteLayer);
-    btnSat.classList.add('highlight');
-    btnDark?.classList.remove('highlight');
-  });
-
-  // Calques Bateaux & Vols
-  const btnFlights = document.getElementById('btn-toggle-flights');
-  btnFlights?.addEventListener('click', () => {
-    const active = flightManager.toggle();
-    btnFlights.classList.toggle('highlight', active);
-  });
-
-  const btnVessels = document.getElementById('btn-toggle-vessels');
-  btnVessels?.addEventListener('click', () => {
-    const active = vesselManager.toggle();
-    btnVessels.classList.toggle('highlight', active);
-  });
-
-  // Vue globale
-  document.getElementById('btn-reset-view')?.addEventListener('click', () => {
-    map.flyTo([20, 0], 3, { duration: 1 });
-  });
+    document.getElementById('item-sat').classList.add('active');
+    document.getElementById('item-dark').classList.remove('active');
+  };
 }
+
+export const createScene = createApplicationScene;
+export default createApplicationScene;
 
 // Exports ES Module
 export const createScene = createApplicationScene;
