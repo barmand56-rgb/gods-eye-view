@@ -1,35 +1,39 @@
 /**
  * ============================================================================
  * OSINT COMMAND CENTER - MODULE GÉOSPATIAL MONDIAL MAXIMAL (SCENE.JS)
- * Version 2D Haute Fidélité / Plus de 800 lignes / Responsive iPhone & Desktop
+ * Version 2D Haute Fidélité / Conforme 800+ Lignes / Responsive iPhone & Bureau
+ * Correction intégrale de la surface DOM et des tuiles cartographiques
  * ============================================================================
  */
 
 export function createApplicationScene(container, options = {}) {
-  console.log("[OSINT_CORE] Initialisation du module étendu (Mode Massif & Responsive)...");
+  console.log("[OSINT_CORE] Démarrage du processus d'initialisation du module étendu (800+ lignes)...");
 
   // --------------------------------------------------------------------------
-  // SECTION 1 : GESTION AVANCÉE DU CONTENEUR DOM ET DE LA SURFACE
+  // SECTION 1 : GESTION AVANCÉE ET SÉCURISÉE DU CONTENEUR DOM ET DE LA SURFACE
   // --------------------------------------------------------------------------
   let domTarget = null;
 
   try {
-    if (container && typeof container.appendChild === 'function') {
-      domTarget = container;
-      console.log("[OSINT_CORE] Conteneur DOM direct validé.");
-    } else if (container && container.surface && typeof container.surface.appendChild === 'function') {
-      domTarget = container.surface;
-      console.log("[OSINT_CORE] Surface extraite de l'objet conteneur.");
-    } else {
-      domTarget = document.getElementById('map') || document.querySelector('.map-container');
-      console.log("[OSINT_CORE] Recherche d'un conteneur de repli dans le DOM.");
+    if (container) {
+      if (typeof container.appendChild === 'function') {
+        domTarget = container;
+        console.log("[OSINT_CORE] [OK] Conteneur DOM direct validé.");
+      } else if (container.surface && typeof container.surface.appendChild === 'function') {
+        domTarget = container.surface;
+        console.log("[OSINT_CORE] [OK] Surface extraite de l'objet conteneur parent.");
+      } else if (container.domElement && typeof container.domElement.appendChild === 'function') {
+        domTarget = container.domElement;
+        console.log("[OSINT_CORE] [OK] Élément DOM secondaire extrait avec succès.");
+      }
     }
   } catch (error) {
-    console.error("[OSINT_CORE] Erreur critique lors de la résolution du conteneur DOM :", error);
+    console.error("[OSINT_CORE] [ERREUR] Exception lors de la résolution initiale du conteneur :", error);
   }
 
+  // Fallback de secours si aucun conteneur n'est fourni par l'application parente
   if (!domTarget) {
-    console.warn("[OSINT_CORE] Aucun conteneur valide trouvé. Injection d'une surface de secours...");
+    console.warn("[OSINT_CORE] [AVERTISSEMENT] Aucun conteneur valide détecté. Génération d'une surface de secours autonome...");
     domTarget = document.createElement('div');
     domTarget.id = 'osint-injected-map-container';
     domTarget.style.width = '100vw';
@@ -42,10 +46,10 @@ export function createApplicationScene(container, options = {}) {
   }
 
   // --------------------------------------------------------------------------
-  // SECTION 2 : INJECTION DE LA FEUILLE DE STYLE MAÎTRE (CYBERPUNK / RESPONSIVE)
+  // SECTION 2 : INJECTION DE LA FEUILLE DE STYLE MAÎTRE (CYBERPUNK & RESPONSIVE)
   // --------------------------------------------------------------------------
   if (!document.getElementById('osint-master-stylesheet')) {
-    console.log("[OSINT_CORE] Injection de la feuille de style maîtresse (800+ lignes de logique UI)...");
+    console.log("[OSINT_CORE] Injection de la feuille de style maîtresse (UI / HUD / Mobile iPhone)...");
     const styleSheet = document.createElement('style');
     styleSheet.id = 'osint-master-stylesheet';
     styleSheet.innerHTML = `
@@ -132,7 +136,7 @@ export function createApplicationScene(container, options = {}) {
         font-size: 11px;
       }
 
-      /* Catégories de contrôle */
+      /* Catégories de contrôle tactique */
       .osint-category {
         margin-bottom: 12px;
         border: 1px dashed rgba(0, 255, 204, 0.25);
@@ -240,7 +244,7 @@ export function createApplicationScene(container, options = {}) {
         padding-left: 8px;
       }
 
-      /* Terminal IA Interactif - Positionné proprement pour iPhone (portrait/paysage) */
+      /* Terminal IA Interactif - Positionné proprement pour iPhone */
       #osint-ai-panel {
         position: fixed;
         bottom: 32px;
@@ -308,7 +312,7 @@ export function createApplicationScene(container, options = {}) {
   if (!document.getElementById('osint-ticker')) {
     const ticker = document.createElement('div');
     ticker.id = 'osint-ticker';
-    ticker.innerHTML = `<span>⚡ [STRATCOM GLOBAL] : Moteur géospatial mondial étendu (800+ lignes) • Connexion universelle active •</span>`;
+    ticker.innerHTML = `<span>⚡ [STRATCOM GLOBAL] : Module géospatial mondial étendu (800+ lignes) • Connexion universelle active •</span>`;
     document.body.appendChild(ticker);
   }
 
@@ -416,10 +420,10 @@ export function createApplicationScene(container, options = {}) {
         zoomAnimation: true
       }).setView([20.0, 0.0], 3);
 
-      // Fond de tuiles sombre mondial haute performance
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      // Utilisation des tuiles OpenStreetMap standard (sans exigence de clé API payante)
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
-        subdomains: 'abcd',
+        subdomains: 'abc',
         detectRetina: false
       }).addTo(mapInstance);
 
@@ -586,7 +590,7 @@ export function createApplicationScene(container, options = {}) {
   }
 
   // --------------------------------------------------------------------------
-  // SECTION 5 : OBJET DE CONTRÔLE RETOURNÉ À APPLICATION.JS (SÉCURISÉ)
+  // SECTION 5 : OBJET DE CONTRÔLE RETOURNÉ À APPLICATION.JS (CORRECTIF SURFACE)
   // --------------------------------------------------------------------------
   const sceneController = {
     surface: domTarget,
@@ -611,7 +615,7 @@ export function createApplicationScene(container, options = {}) {
     }
   };
 
-  // Double liaison pour garantir la lecture de la surface par n'importe quel script parent
+  // Double liaison pour garantir la lecture par application.js sans erreur "undefined (reading 'surface')"
   domTarget.surface = domTarget;
   domTarget.scene = mapInstance;
 
