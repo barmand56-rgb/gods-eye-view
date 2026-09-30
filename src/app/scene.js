@@ -1,62 +1,62 @@
 import * as Cesium from 'cesium';
 import { createApplicationViewer } from './viewer.js';
-import { installTrackpadPinchZoom } from './trackpad.js';
-import { registerDataCredits, configureCreditKeyboardAccess } from './credits.js';
 import { loadPhotorealisticTileset } from './google3d.js';
-import { defer } from './utils.js';
 
-export async function createApplicationScene({ googleApiKey, cesiumToken, credits } = {}) {
+/**
+ * Initialise et configure la scène 3D Cesium (Version nettoyée et ultra-résistante).
+ */
+export async function createApplicationScene({ googleApiKey, cesiumToken } = {}) {
   const loaderStatus = document.querySelector('#loading-loaderStatus');
 
+  // 1. Conteneur pour les crédits
   const creditContainer = document.createElement('div');
   creditContainer.className = 'cesium-credit-container-custom';
   document.body.appendChild(creditContainer);
-  defer(() => creditContainer.remove());
 
-  // Initialisation du viewer
+  // 2. Création du viewer Cesium
   const viewer = createApplicationViewer({
     container: 'cesiumContainer',
     creditContainer,
   });
 
-  // Sécurité anti-crash du moteur de rendu
+  // 3. Protection anti-crash du moteur de rendu
   viewer.scene.rethrowRenderErrors = false;
   viewer.useDefaultRenderLoop = true;
 
   if (viewer.scene.renderError) {
     viewer.scene.renderError.addEventListener((scene, error) => {
-      console.warn("Erreur de rendu ignorée par la sécurité :", error);
+      console.warn('Erreur de texture ou de rendu ignorée par la sécurité :', error);
     });
   }
 
-  defer(() => {
-    if (!viewer.isDestroyed()) {
-      viewer.destroy();
-    }
-  });
-
-  defer(installTrackpadPinchZoom(viewer));
-  if (credits) {
-    registerDataCredits(viewer, credits);
+  // 4. Chargement des tuiles 3D avec Fallback automatique
+  if (loaderStatus) {
+    loaderStatus.textContent = 'Chargement de la scène 3D...';
   }
-  configureCreditKeyboardAccess(document);
 
-  // Tentative de chargement des tuiles Google 3D avec Fallback
   try {
-    const photoreal = await loadPhotorealisticTileset(Cesium, {
-      googleApiKey,
-      cesiumToken,
-    });
+    let loadedTileset = null;
 
-    if (photoreal && photoreal.tileset) {
-      viewer.scene.primitives.add(photoreal.tileset);
-      console.log('[Init] Google 3D Tiles chargé.');
+    if (googleApiKey || cesiumToken) {
+      const photoreal = await loadPhotorealisticTileset(Cesium, {
+        googleApiKey,
+        cesiumToken,
+      });
+      if (photoreal && photoreal.tileset) {
+        loadedTileset = photoreal.tileset;
+      }
+    }
+
+    if (loadedTileset) {
+      viewer.scene.primitives.add(loadedTileset);
+      console.log('[Init] Google 3D Tiles chargé avec succès.');
     } else {
       throw new Error("Tuiles 3D indisponibles.");
     }
-  } catch (err) {
-    console.warn('[Fallback] Bascule sur la Terre 3D satellite par défaut.');
-    // Activer la Terre 3D native Cesium si Google 403
+  } catch (error) {
+    console.warn('Google 3D Tiles indisponible. Bascule automatique sur la Terre 3D par défaut :', error);
+    
+    // Activer le globe 3D satellite Cesium si les tuiles Google échouent
     viewer.scene.globe.show = true;
   }
 
