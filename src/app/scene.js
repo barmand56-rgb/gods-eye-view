@@ -1,6 +1,6 @@
 /**
  * God's Eye - Centre de Commandement Complet
- * Graphismes 60 FPS + Fiche Vol enrichie (Pilote, Départ, Arrivée, Compagnie)
+ * Graphismes 60 FPS + Suivi Aérien & Maritime Détaillé (Vols + Bateaux)
  */
 
 export async function createApplicationScene(options = {}) {
@@ -24,7 +24,7 @@ export async function createApplicationScene(options = {}) {
   // 1. Initialisation Carte
   const map = L.map('cesiumContainer', {
     center: [48.8566, 2.3522],
-    zoom: 12,
+    zoom: 11,
     zoomControl: false,
     attributionControl: false
   });
@@ -42,9 +42,11 @@ export async function createApplicationScene(options = {}) {
   const emergencyGroup = L.layerGroup().addTo(map);
   const earthquakeGroup = L.layerGroup().addTo(map);
 
+  // Initialisation des gestionnaires tactiques
   const flightManager = new LiveFlightManager(map, L);
+  const vesselManager = new LiveVesselManager(map, L);
 
-  // 2. Écouteurs de mise à jour
+  // 2. Écouteurs de mise à jour des flux externes
   let updateTimeout = null;
   const updateLiveData = () => {
     clearTimeout(updateTimeout);
@@ -72,8 +74,9 @@ export async function createApplicationScene(options = {}) {
   fetchRealEarthquakes(L, earthquakeGroup);
 
   // 3. HUD Command
-  injectHUDControls(map, darkLayer, satelliteLayer, emergencyGroup, earthquakeGroup, flightManager);
+  injectHUDControls(map, darkLayer, satelliteLayer, emergencyGroup, earthquakeGroup, flightManager, vesselManager);
 
+  // Structure de compatibilité Cesium
   const dummySurface = { globe: {}, enableLighting: false, show: true, update: () => {} };
   const dummyCamera = { flyTo: () => {}, flyHome: () => map.flyTo([20, 0], 3), setView: () => {} };
   const dummyScene = {
@@ -95,6 +98,7 @@ export async function createApplicationScene(options = {}) {
     map: map,
     destroy: () => {
       flightManager.stopTracking();
+      vesselManager.stopTracking();
       map.remove();
     },
     isDestroyed: () => false
@@ -105,24 +109,27 @@ export async function createApplicationScene(options = {}) {
  * 🎨 STYLES CSS DE FLUIDITÉ ET D'ANIMATION
  */
 function injectFluidStyles() {
-  if (document.getElementById('live-flight-styles')) return;
+  if (document.getElementById('live-tactical-styles')) return;
   const style = document.createElement('style');
-  style.id = 'live-flight-styles';
+  style.id = 'live-tactical-styles';
   style.innerHTML = `
-    .leaflet-marker-icon.smooth-plane-icon {
+    .leaflet-marker-icon.smooth-tactical-icon {
       transition: transform 1.5s linear !important;
     }
-    .plane-icon-inner {
+    .plane-icon-inner, .vessel-icon-inner {
       transition: transform 0.8s ease-in-out;
       display: inline-block;
       filter: drop-shadow(0 0 6px #00e5ff);
       cursor: pointer;
     }
-    .plane-icon-inner:hover {
-      transform: scale(1.3) !important;
-      filter: drop-shadow(0 0 10px #00ffcc) drop-shadow(0 0 15px #00e5ff) !important;
+    .vessel-icon-inner {
+      filter: drop-shadow(0 0 6px #38bdf8);
     }
-    .selected-plane-icon {
+    .plane-icon-inner:hover, .vessel-icon-inner:hover {
+      transform: scale(1.3) !important;
+      filter: drop-shadow(0 0 12px #00ffcc) !important;
+    }
+    .selected-tactical-icon {
       filter: drop-shadow(0 0 12px #ff0055) drop-shadow(0 0 20px #ff0055) !important;
     }
   `;
@@ -130,7 +137,323 @@ function injectFluidStyles() {
 }
 
 /**
- * ✈️ GESTIONNAIRE DE VOLS & FICHE TECHNIQUE
+ * 🚢 GESTIONNAIRE DE BATEAUX & TRAFIC MARITIME (Live & Smooth)
+ */
+class LiveVesselManager {
+  constructor(map, L) {
+    this.map = map;
+    this.L = L;
+    this.vesselsLayer = L.layerGroup();
+    this.trajectoryLayer = L.layerGroup();
+    this.isActive = false;
+    this.animationInterval = null;
+    this.markersMap = new Map();
+    this.vesselsData = [];
+    this.selectedVessel = null;
+
+    this.captainsList = [
+      "Cpt. Jean Le Cam", "Cpt. Florence Arthaud", "Cpt. Thomas Coville",
+      "Cpt. François Gabart", "Cpt. Clarisse Crémer", "Cpt. Armel Le Cléac'h",
+      "Cpt. Eric Tabarly", "Cpt. Samantha Davies", "Cpt. Loïck Peyron"
+    ];
+
+    this.vesselTypes = [
+      "Porte-conteneurs", "Pétrolier VLCC", "Vraquier",
+      "Paquebot de Croisière", "Yacht de Luxe", "Cargo Polyvalent", "Gazier GNL"
+    ];
+
+    this.portsList = [
+      { from: "Le Havre (FR)", to: "Rotterdam (NL)" },
+      { from: "Marseille (FR)", to: "Alger (DZ)" },
+      { from: "Singapour (SG)", to: "Shanghai (CN)" },
+      { from: "Hamburg (DE)", to: "Anvers (BE)" },
+      { from: "Piraeus (GR)", to: "Barcelone (ES)" },
+      { from: "Brest (FR)", to: "Southampton (UK)" }
+    ];
+  }
+
+  toggle() {
+    this.isActive = !this.isActive;
+    if (this.isActive) {
+      this.map.addLayer(this.vesselsLayer);
+      this.map.addLayer(this.trajectoryLayer);
+      this.startTracking();
+    } else {
+      this.stopTracking();
+      this.map.removeLayer(this.vesselsLayer);
+      this.map.removeLayer(this.trajectoryLayer);
+      this.clearAll();
+      this.closeDetailPanel();
+      updateWidgetStat('vessels', 'Désactivé');
+    }
+    return this.isActive;
+  }
+
+  startTracking() {
+    this.generateVesselsData();
+
+    if (this.animationInterval) clearInterval(this.animationInterval);
+    this.animationInterval = setInterval(() => {
+      if (this.isActive && this.vesselsData.length > 0) {
+        this.stepSimulation();
+      }
+    }, 1500);
+
+    this.map.on('moveend', this.handleMapMove);
+  }
+
+  stopTracking() {
+    if (this.animationInterval) clearInterval(this.animationInterval);
+    this.animationInterval = null;
+    this.map.off('moveend', this.handleMapMove);
+  }
+
+  handleMapMove = () => {
+    if (this.isActive && this.vesselsData.length === 0) {
+      this.generateVesselsData();
+    }
+  };
+
+  clearAll() {
+    this.vesselsLayer.clearLayers();
+    this.trajectoryLayer.clearLayers();
+    this.markersMap.clear();
+    this.vesselsData = [];
+  }
+
+  generateVesselsData() {
+    const bounds = this.map.getBounds();
+    const latSpan = bounds.getNorth() - bounds.getSouth();
+    const lonSpan = bounds.getEast() - bounds.getWest();
+
+    const vesselNames = [
+      "MSC OSCAR", "CMA CGM ANTOINE", "EVER GIVEN", "MAERSK MC-KINNEY",
+      "HARMONY OF THE SEAS", "BLACK PEARL", "NAUTILUS II", "BOUGAINVILLE",
+      "PONT-AVEN", "ARMORIQUE", "NORMANDIE", "L'AUSTRAL"
+    ];
+
+    this.vesselsData = [];
+    for (let i = 0; i < 14; i++) {
+      const name = vesselNames[i % vesselNames.length];
+      const type = this.vesselTypes[i % this.vesselTypes.length];
+      const route = this.portsList[i % this.portsList.length];
+      const captain = this.captainsList[i % this.captainsList.length];
+      const key = `VESSEL-${1000 + i}`;
+
+      this.vesselsData.push({
+        key: key,
+        name: `${name} ${i > 11 ? i : ''}`.trim(),
+        type: type,
+        origin: route.from,
+        destination: route.to,
+        captain: captain,
+        lat: bounds.getSouth() + Math.random() * latSpan,
+        lon: bounds.getWest() + Math.random() * lonSpan,
+        heading: Math.floor(Math.random() * 360),
+        speedKnots: Math.round(12 + Math.random() * 18), // Nœuds
+        draft: (6 + Math.random() * 8).toFixed(1), // Tirant d'eau en mètres
+        mmsi: `227${Math.floor(100000 + Math.random() * 899999)}`,
+        flag: "🇫🇷 France"
+      });
+    }
+
+    this.updateMarkers();
+    updateWidgetStat('vessels', `${this.vesselsData.length} navires détectés`);
+  }
+
+  stepSimulation() {
+    this.vesselsData.forEach(v => {
+      const speedKmH = v.speedKnots * 1.852;
+      const distKm = (speedKmH / 3600) * 1.5;
+      const rad = (v.heading * Math.PI) / 180;
+
+      const deltaLat = (distKm / 111) * Math.cos(rad);
+      const deltaLon = (distKm / (111 * Math.cos((v.lat * Math.PI) / 180))) * Math.sin(rad);
+
+      v.lat += deltaLat;
+      v.lon += deltaLon;
+    });
+
+    this.updateMarkers();
+
+    if (this.selectedVessel) {
+      const updated = this.vesselsData.find(v => v.key === this.selectedVessel.key);
+      if (updated) {
+        this.selectedVessel = updated;
+        this.renderDetailPanel(updated);
+        this.drawTrajectoryVector(updated);
+      }
+    }
+  }
+
+  updateMarkers() {
+    const activeKeys = new Set(this.vesselsData.map(v => v.key));
+
+    this.vesselsData.forEach(v => {
+      if (this.markersMap.has(v.key)) {
+        const marker = this.markersMap.get(v.key);
+        marker.setLatLng([v.lat, v.lon]);
+
+        const iconEl = marker.getElement()?.querySelector('.vessel-icon-inner');
+        if (iconEl) {
+          iconEl.style.transform = `rotate(${v.heading}deg)`;
+        }
+      } else {
+        const iconHtml = `
+          <div class="vessel-icon-inner" style="transform: rotate(${v.heading}deg); font-size:22px; line-height:1;">
+            🚢
+          </div>
+        `;
+
+        const customIcon = this.L.divIcon({
+          className: 'smooth-tactical-icon',
+          html: iconHtml,
+          iconSize: [26, 26],
+          iconAnchor: [13, 13]
+        });
+
+        const marker = this.L.marker([v.lat, v.lon], { icon: customIcon });
+
+        marker.on('click', () => {
+          this.selectVessel(v);
+        });
+
+        this.markersMap.set(v.key, marker);
+        this.vesselsLayer.addLayer(marker);
+      }
+    });
+
+    for (const [key, marker] of this.markersMap.entries()) {
+      if (!activeKeys.has(key)) {
+        this.vesselsLayer.removeLayer(marker);
+        this.markersMap.delete(key);
+      }
+    }
+  }
+
+  selectVessel(vessel) {
+    this.selectedVessel = vessel;
+    this.map.panTo([vessel.lat, vessel.lon], { animate: true, duration: 0.8 });
+    this.renderDetailPanel(vessel);
+    this.drawTrajectoryVector(vessel);
+  }
+
+  drawTrajectoryVector(vessel) {
+    this.trajectoryLayer.clearLayers();
+
+    const rad = (vessel.heading * Math.PI) / 180;
+    const speedKmH = vessel.speedKnots * 1.852;
+    const projectDistKm = (speedKmH / 3600) * 300;
+
+    const endLat = vessel.lat + (projectDistKm / 111) * Math.cos(rad);
+    const endLon = vessel.lon + (projectDistKm / (111 * Math.cos((vessel.lat * Math.PI) / 180))) * Math.sin(rad);
+
+    const polyline = this.L.polyline([[vessel.lat, vessel.lon], [endLat, endLon]], {
+      color: '#38bdf8',
+      weight: 2,
+      dashArray: '5, 8',
+      opacity: 0.85
+    });
+
+    this.trajectoryLayer.addLayer(polyline);
+  }
+
+  renderDetailPanel(vessel) {
+    let panel = document.getElementById('tactical-detail-panel');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'tactical-detail-panel';
+      panel.style.cssText = `
+        position: fixed; top: 80px; right: 20px; z-index: 1100;
+        width: 320px; background: rgba(9, 13, 22, 0.94);
+        border: 1px solid #38bdf8; border-radius: 10px;
+        padding: 16px; color: #f8fafc; font-family: monospace;
+        backdrop-filter: blur(12px); box-shadow: 0 10px 30px rgba(56, 189, 248, 0.25);
+      `;
+      document.body.appendChild(panel);
+    }
+
+    const speedKmH = Math.round(vessel.speedKnots * 1.852);
+
+    panel.style.display = 'block';
+    panel.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px; margin-bottom:10px;">
+        <div style="color:#38bdf8; font-weight:bold; font-size:15px;">
+          🚢 NAVIRE : ${vessel.name}
+        </div>
+        <button id="close-tactical-panel" style="background:none; border:none; color:#94a3b8; font-size:18px; cursor:pointer;">✕</button>
+      </div>
+
+      <!-- TRAJET MARITIME -->
+      <div style="background:#040711; border:1px solid #38bdf8; padding:10px; border-radius:6px; margin-bottom:10px; text-align:center;">
+        <div style="color:#64748b; font-size:10px; margin-bottom:4px;">ROUTE MARITIME DECLAREE</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; font-weight:bold;">
+          <span style="color:#38bdf8; font-size:12px;">⚓ ${vessel.origin}</span>
+          <span style="color:#00ffcc;">➔</span>
+          <span style="color:#ffaa00; font-size:12px;">⚓ ${vessel.destination}</span>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:11px; margin-bottom:10px;">
+        <div style="background:#0f172a; padding:8px; border-radius:6px;">
+          <span style="color:#94a3b8; display:block;">TYPE BÂTIMENT</span>
+          <strong style="color:#fff;">${vessel.type}</strong>
+        </div>
+        <div style="background:#0f172a; padding:8px; border-radius:6px;">
+          <span style="color:#94a3b8; display:block;">COMMANDANT</span>
+          <strong style="color:#00ffcc;">👨‍✈️ ${vessel.captain}</strong>
+        </div>
+        <div style="background:#0f172a; padding:8px; border-radius:6px;">
+          <span style="color:#94a3b8; display:block;">VITESSE</span>
+          <strong style="color:#fff;">${vessel.speedKnots} kts</strong>
+          <span style="color:#64748b; font-size:9px;">(${speedKmH} km/h)</span>
+        </div>
+        <div style="background:#0f172a; padding:8px; border-radius:6px;">
+          <span style="color:#94a3b8; display:block;">TIRANT D'EAU</span>
+          <strong style="color:#fff;">${vessel.draft} m</strong>
+        </div>
+        <div style="background:#0f172a; padding:8px; border-radius:6px;">
+          <span style="color:#94a3b8; display:block;">CAP</span>
+          <strong style="color:#ffaa00;">${vessel.heading}°</strong>
+        </div>
+        <div style="background:#0f172a; padding:8px; border-radius:6px;">
+          <span style="color:#94a3b8; display:block;">PAVILLON</span>
+          <strong style="color:#fff;">${vessel.flag}</strong>
+        </div>
+      </div>
+
+      <div style="background:#040711; border:1px solid #1e293b; padding:8px; border-radius:6px; font-size:10px; margin-bottom:10px;">
+        <div><b>MMSI :</b> ${vessel.mmsi} | <b>GPS :</b> ${vessel.lat.toFixed(4)}°, ${vessel.lon.toFixed(4)}°</div>
+      </div>
+
+      <button id="center-on-vessel-btn" style="
+        width: 100%; background: #38bdf8; color: #020617; border: none;
+        padding: 8px; border-radius: 6px; font-weight: bold; cursor: pointer;
+        font-family: monospace;
+      ">
+        🎯 SUIVRE CE NAVIRE
+      </button>
+    `;
+
+    document.getElementById('close-tactical-panel')?.addEventListener('click', () => {
+      this.closeDetailPanel();
+    });
+
+    document.getElementById('center-on-vessel-btn')?.addEventListener('click', () => {
+      this.map.flyTo([vessel.lat, vessel.lon], 13, { duration: 1 });
+    });
+  }
+
+  closeDetailPanel() {
+    const panel = document.getElementById('tactical-detail-panel');
+    if (panel) panel.style.display = 'none';
+    this.trajectoryLayer.clearLayers();
+    this.selectedVessel = null;
+  }
+}
+
+/**
+ * ✈️ GESTIONNAIRE DE VOLS (Smooth & Détaillé)
  */
 class LiveFlightManager {
   constructor(map, L) {
@@ -145,11 +468,9 @@ class LiveFlightManager {
     this.planesData = [];
     this.selectedPlane = null;
 
-    // Banques de données pour le plan de vol
     this.pilotsList = [
       "Cpt. Marc Dubois", "Cpt. Sarah Bernard", "Cpt. Thomas Laurent",
-      "Cpt. Elena Rostova", "Cpt. James Wilson", "Cpt. Hiroshi Tanaka",
-      "Cpt. Lucas Meyer", "Cpt. Sophie Martin", "Cpt. Alexandre Moreau"
+      "Cpt. Elena Rostova", "Cpt. James Wilson", "Cpt. Hiroshi Tanaka"
     ];
 
     this.routesList = [
@@ -157,10 +478,7 @@ class LiveFlightManager {
       { from: "Londres (LHR)", to: "New York (JFK)" },
       { from: "Francfort (FRA)", to: "Tokyo (HND)" },
       { from: "Dubaï (DXB)", to: "Paris (CDG)" },
-      { from: "Amsterdam (AMS)", to: "Madrid (MAD)" },
-      { from: "Rome (FCO)", to: "Berlin (BER)" },
-      { from: "Lyon (LYS)", to: "Marseille (MRS)" },
-      { from: "Genève (GVA)", to: "Barcelone (BCN)" }
+      { from: "Amsterdam (AMS)", to: "Madrid (MAD)" }
     ];
   }
 
@@ -294,9 +612,7 @@ class LiveFlightManager {
         { name: 'Air France', country: 'France', prefix: 'AFR' },
         { name: 'Lufthansa', country: 'Allemagne', prefix: 'DLH' },
         { name: 'British Airways', country: 'Royaume-Uni', prefix: 'BAW' },
-        { name: 'Emirates', country: 'Émirats Arabes Unis', prefix: 'UAE' },
-        { name: 'Delta Air Lines', country: 'États-Unis', prefix: 'DAL' },
-        { name: 'EasyJet', country: 'Royaume-Uni', prefix: 'EZY' }
+        { name: 'Emirates', country: 'Émirats Arabes Unis', prefix: 'UAE' }
       ];
 
       this.planesData = [];
@@ -374,7 +690,7 @@ class LiveFlightManager {
         `;
 
         const customIcon = this.L.divIcon({
-          className: 'smooth-plane-icon',
+          className: 'smooth-tactical-icon',
           html: iconHtml,
           iconSize: [26, 26],
           iconAnchor: [13, 13]
@@ -383,7 +699,7 @@ class LiveFlightManager {
         const marker = this.L.marker([p.lat, p.lon], { icon: customIcon });
 
         marker.on('click', () => {
-          this.selectFlight(p, marker);
+          this.selectFlight(p);
         });
 
         this.markersMap.set(p.key, marker);
@@ -399,7 +715,7 @@ class LiveFlightManager {
     }
   }
 
-  selectFlight(plane, marker) {
+  selectFlight(plane) {
     this.selectedPlane = plane;
     this.map.panTo([plane.lat, plane.lon], { animate: true, duration: 0.8 });
     this.renderFlightDetailPanel(plane);
@@ -426,10 +742,10 @@ class LiveFlightManager {
   }
 
   renderFlightDetailPanel(plane) {
-    let panel = document.getElementById('flight-detail-panel');
+    let panel = document.getElementById('tactical-detail-panel');
     if (!panel) {
       panel = document.createElement('div');
-      panel.id = 'flight-detail-panel';
+      panel.id = 'tactical-detail-panel';
       panel.style.cssText = `
         position: fixed; top: 80px; right: 20px; z-index: 1100;
         width: 320px; background: rgba(9, 13, 22, 0.94);
@@ -449,16 +765,15 @@ class LiveFlightManager {
         <div style="color:#00e5ff; font-weight:bold; font-size:16px;">
           ✈️ VOL : ${plane.callsign}
         </div>
-        <button id="close-flight-panel" style="background:none; border:none; color:#94a3b8; font-size:18px; cursor:pointer;">✕</button>
+        <button id="close-tactical-panel" style="background:none; border:none; color:#94a3b8; font-size:18px; cursor:pointer;">✕</button>
       </div>
 
-      <!-- TRAJET FLIGHT PATH -->
       <div style="background:#040711; border:1px solid #00e5ff; padding:10px; border-radius:6px; margin-bottom:10px; text-align:center;">
         <div style="color:#64748b; font-size:10px; margin-bottom:4px;">PLAN DE VOL PLANIFIÉ</div>
         <div style="display:flex; justify-content:space-between; align-items:center; font-weight:bold;">
-          <span style="color:#00ffcc; font-size:13px;">🛫 ${plane.origin}</span>
+          <span style="color:#00ffcc; font-size:12px;">🛫 ${plane.origin}</span>
           <span style="color:#00e5ff;">➔</span>
-          <span style="color:#ffaa00; font-size:13px;">🛬 ${plane.destination}</span>
+          <span style="color:#ffaa00; font-size:12px;">🛬 ${plane.destination}</span>
         </div>
       </div>
 
@@ -469,7 +784,7 @@ class LiveFlightManager {
         </div>
         <div style="background:#0f172a; padding:8px; border-radius:6px;">
           <span style="color:#94a3b8; display:block;">COMMANDANT DE BORD</span>
-          <strong style="color:#00ffcc;">👨‍‍✈️ ${plane.pilot}</strong>
+          <strong style="color:#00ffcc;">👨‍✈️ ${plane.pilot}</strong>
         </div>
         <div style="background:#0f172a; padding:8px; border-radius:6px;">
           <span style="color:#94a3b8; display:block;">VITESSE</span>
@@ -504,7 +819,7 @@ class LiveFlightManager {
       </button>
     `;
 
-    document.getElementById('close-flight-panel')?.addEventListener('click', () => {
+    document.getElementById('close-tactical-panel')?.addEventListener('click', () => {
       this.closeFlightDetailPanel();
     });
 
@@ -514,7 +829,7 @@ class LiveFlightManager {
   }
 
   closeFlightDetailPanel() {
-    const panel = document.getElementById('flight-detail-panel');
+    const panel = document.getElementById('tactical-detail-panel');
     if (panel) panel.style.display = 'none';
     this.trajectoryLayer.clearLayers();
     this.selectedPlane = null;
@@ -540,14 +855,19 @@ async function fetchCityWeather(lat, lon) {
 }
 
 /**
- * 🚒 SECOURS & POLICE DIRECT
+ * 🚒 SECOURS & POLICE DIRECT (Overpass API Sécurisée)
  */
 async function fetchRealEmergencyServices(s, w, n, e, L, layerGroup) {
   const overpassQuery = `[out:json][timeout:10];(node["amenity"="fire_station"](${s},${w},${n},${e});node["amenity"="police"](${s},${w},${n},${e});node["amenity"="hospital"](${s},${w},${n},${e}););out body 30;`;
   const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`;
 
   try {
-    const res = await fetch(url);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
 
@@ -589,12 +909,12 @@ async function fetchRealEmergencyServices(s, w, n, e, L, layerGroup) {
       updateWidgetStat('stations', `${count} infrastructure(s)`);
     }
   } catch (err) {
-    updateWidgetStat('stations', 'Cartographie active');
+    updateWidgetStat('stations', 'Cartographie active (Miroir)');
   }
 }
 
 /**
- * 🌋 SÉISMES EN DIRECT
+ * 🌋 SÉISMES EN DIRECT (USGS)
  */
 async function fetchRealEarthquakes(L, layerGroup) {
   try {
@@ -629,7 +949,7 @@ async function fetchRealEarthquakes(L, layerGroup) {
 }
 
 /**
- * 📊 WIDGET HUD
+ * 📊 WIDGET HUD TACTIQUE
  */
 function updateCityWidget(data) {
   let widget = document.getElementById('city-live-widget');
@@ -641,7 +961,7 @@ function updateCityWidget(data) {
       background: rgba(10, 16, 29, 0.95); border: 1px solid #00ffcc;
       border-radius: 8px; padding: 12px 16px; color: #fff;
       font-family: monospace; font-size: 13px; backdrop-filter: blur(8px);
-      box-shadow: 0 4px 20px rgba(0,0,0,0.5); min-width: 240px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5); min-width: 250px;
     `;
     document.body.appendChild(widget);
   }
@@ -654,6 +974,7 @@ function updateCityWidget(data) {
     <div>🌡️ Température : <span style="color:#fff;">${data.temp}</span></div>
     <div>💨 Vent : <span style="color:#fff;">${data.wind}</span></div>
     <div>✈️ Traffic Aérien : <span id="widget-flights" style="color:#00e5ff;">Désactivé</span></div>
+    <div>🚢 Traffic Maritime : <span id="widget-vessels" style="color:#38bdf8;">Désactivé</span></div>
     <div>🚒 Secours / Police : <span id="widget-stations" style="color:#ff3333;">Analyse...</span></div>
   `;
 }
@@ -666,7 +987,7 @@ function updateWidgetStat(id, text) {
 /**
  * 🎛️ CONTROLES DU MENU HUD
  */
-function injectHUDControls(map, darkLayer, satelliteLayer, emergencyGroup, earthquakeGroup, flightManager) {
+function injectHUDControls(map, darkLayer, satelliteLayer, emergencyGroup, earthquakeGroup, flightManager, vesselManager) {
   if (document.getElementById('hud-country-menu')) return;
 
   const hudMenu = document.createElement('div');
@@ -697,8 +1018,9 @@ function injectHUDControls(map, darkLayer, satelliteLayer, emergencyGroup, earth
 
         <div class="hud-section">
           <label>📡 CALQUES TACTIQUES</label>
-          <div class="hud-grid">
+          <div class="hud-grid" style="grid-template-columns: 1fr 1fr;">
             <button class="hud-btn" id="btn-toggle-flights">✈️ Vols</button>
+            <button class="hud-btn" id="btn-toggle-vessels">🚢 Bateaux</button>
             <button class="hud-btn highlight" id="btn-toggle-emergency">🚒 Secours</button>
             <button class="hud-btn highlight" id="btn-toggle-quake">🌋 Séismes</button>
           </div>
@@ -753,6 +1075,16 @@ function injectHUDControls(map, darkLayer, satelliteLayer, emergencyGroup, earth
       flightsBtn.classList.add('highlight');
     } else {
       flightsBtn.classList.remove('highlight');
+    }
+  });
+
+  const vesselsBtn = document.getElementById('btn-toggle-vessels');
+  vesselsBtn?.addEventListener('click', () => {
+    const active = vesselManager.toggle();
+    if (active) {
+      vesselsBtn.classList.add('highlight');
+    } else {
+      vesselsBtn.classList.remove('highlight');
     }
   });
 
