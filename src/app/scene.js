@@ -1112,14 +1112,10 @@ function injectHUDControls(map, darkLayer, satelliteLayer, emergencyGroup, earth
     map.flyTo([20, 0], 3, { duration: 1 });
   });
 }
-
-export const createScene = createApplicationScene;
-export default createApplicationScene;
   document.getElementById('btn-toggle-quake')?.addEventListener('click', (e) => {
     map.hasLayer(earthquakeGroup) ? map.removeLayer(earthquakeGroup) : map.addLayer(earthquakeGroup);
     e.target.classList.toggle('highlight', map.hasLayer(earthquakeGroup));
   });
-}
-
+  
 export const createScene = createApplicationScene;
 export default createApplicationScene;
