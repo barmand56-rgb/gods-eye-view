@@ -1,8 +1,8 @@
 /**
- * God's Eye - Centre de Commandement Optimisé
+ * God's Eye - Centre de Commandement Optimisé (Ultra-Rapide)
  * - Cartographie (Sombre / Satellite)
  * - Recherche Automatique de villes
- * - Suivi Aérien (✈️) & Maritime (🚢) ultra-fluide
+ * - Suivi Aérien (✈️) & Maritime (🚢) ultra-fluide & temps réel (60 FPS)
  */
 
 export async function createApplicationScene(options = {}) {
@@ -68,8 +68,8 @@ export async function createApplicationScene(options = {}) {
     scene: { surface: dummySurface, globe: dummySurface, camera: { flyTo: () => {}, flyHome: () => map.flyTo([20, 0], 3) } },
     map,
     destroy: () => {
-      flightManager.stopTracking();
-      vesselManager.stopTracking();
+      flightManager.stop();
+      vesselManager.stop();
       map.remove();
     }
   };
@@ -83,8 +83,8 @@ function injectFluidStyles() {
   const style = document.createElement('style');
   style.id = 'live-tactical-styles';
   style.innerHTML = `
-    .leaflet-marker-icon.smooth-tactical-icon { transition: transform 1.2s linear !important; }
-    .tactical-icon-inner { transition: transform 0.4s ease; display: inline-block; cursor: pointer; }
+    .leaflet-marker-icon.smooth-tactical-icon { transition: transform 0.1s linear !important; }
+    .tactical-icon-inner { transition: transform 0.1s linear; display: inline-block; cursor: pointer; }
     .vessel-icon { filter: drop-shadow(0 0 5px #38bdf8); }
     .plane-icon { filter: drop-shadow(0 0 5px #00e5ff); }
     .tactical-icon-inner:hover { transform: scale(1.3) !important; filter: drop-shadow(0 0 10px #00ffcc) !important; }
@@ -93,7 +93,7 @@ function injectFluidStyles() {
 }
 
 /**
- * 🛡️ CLASSE PARENT UNIFIÉE
+ * 🛡️ CLASSE PARENT UNIFIÉE (60 FPS / Animation Frame)
  */
 class TacticalEntityManager {
   constructor(map, L, options) {
@@ -105,7 +105,8 @@ class TacticalEntityManager {
     this.layer = L.layerGroup();
     this.trajectoryLayer = L.layerGroup();
     this.isActive = false;
-    this.timer = null;
+    this.animationFrameId = null;
+    this.lastTime = null;
     this.markersMap = new Map();
     this.entities = [];
     this.selected = null;
@@ -130,13 +131,22 @@ class TacticalEntityManager {
 
   start() {
     this.generateData();
-    if (this.timer) clearInterval(this.timer);
-    this.timer = setInterval(() => this.step(), 1500);
+    this.lastTime = performance.now();
+    const loop = (time) => {
+      if (!this.isActive) return;
+      const dt = (time - this.lastTime) / 1000;
+      this.lastTime = time;
+      this.step(dt);
+      this.animationFrameId = requestAnimationFrame(loop);
+    };
+    this.animationFrameId = requestAnimationFrame(loop);
   }
 
   stop() {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    if (this.animationFrameId) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
   }
 
   clear() {
@@ -146,9 +156,12 @@ class TacticalEntityManager {
     this.entities = [];
   }
 
-  step() {
+  step(dt) {
+    if (!dt || dt > 1) dt = 0.016;
+
     this.entities.forEach(e => {
-      const distKm = (e.speed / 3600) * 1.5;
+      // Calcul déplacement ultra-réactif selon dt
+      const distKm = (e.speed / 3600) * dt * 5; // Multiplicateur de vitesse pour animation fluide
       const rad = (e.heading * Math.PI) / 180;
       e.lat += (distKm / 111) * Math.cos(rad);
       e.lon += (distKm / (111 * Math.cos((e.lat * Math.PI) / 180))) * Math.sin(rad);
@@ -199,7 +212,7 @@ class TacticalEntityManager {
 
   select(entity) {
     this.selected = entity;
-    this.map.panTo([entity.lat, entity.lon], { animate: true, duration: 0.8 });
+    this.map.panTo([entity.lat, entity.lon], { animate: true, duration: 0.3 });
     DetailPanel.update(entity, this.color, this.map);
     this.drawTrajectory(entity);
   }
@@ -248,7 +261,7 @@ class LiveVesselManager extends TacticalEntityManager {
     }));
 
     this.renderMarkers();
-    updateWidgetStat('vessels', `${this.entities.length} navires actifs`);
+    updateWidgetStat('vessels', `${this.entities.length} navires actifs (Temps Réel)`);
   }
 }
 
@@ -281,7 +294,7 @@ class LiveFlightManager extends TacticalEntityManager {
     }));
 
     this.renderMarkers();
-    updateWidgetStat('flights', `${this.entities.length} vols actifs`);
+    updateWidgetStat('flights', `${this.entities.length} vols actifs (Temps Réel)`);
   }
 }
 
@@ -337,7 +350,7 @@ const DetailPanel = {
 
     const trackBtn = document.getElementById('dp-track');
     trackBtn.style.background = color;
-    trackBtn.onclick = () => map.flyTo([e.lat, e.lon], 13, { duration: 0.8 });
+    trackBtn.onclick = () => map.flyTo([e.lat, e.lon], 13, { duration: 0.5 });
   },
 
   hide() {
