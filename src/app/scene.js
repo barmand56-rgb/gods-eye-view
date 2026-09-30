@@ -1,6 +1,7 @@
 /**
- * God's Eye - Centre d'Informations en Direct (Contournement CORS)
+ * God's Eye - Centre de Commandement Complet (100% Intégré dans scene.js)
  */
+
 export async function createApplicationScene(options = {}) {
   const loaderStatus = document.querySelector('#loading-loaderStatus');
   if (loaderStatus) loaderStatus.style.display = 'none';
@@ -19,13 +20,13 @@ export async function createApplicationScene(options = {}) {
 
   // 1. Initialisation Carte
   const map = L.map('cesiumContainer', {
-    center: [48.8566, 2.3522], // Centré par défaut sur Paris
+    center: [48.8566, 2.3522], // Centré sur Paris par défaut
     zoom: 12,
     zoomControl: false,
     attributionControl: false
   });
 
-  // Fond de carte Sombre
+  // Fonds de Carte
   const darkLayer = L.tileLayer(
     'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
     { maxZoom: 16 }
@@ -37,29 +38,41 @@ export async function createApplicationScene(options = {}) {
   );
 
   // Groupes de Calques
-  const flightsGroup = L.layerGroup().addTo(map);
   const emergencyGroup = L.layerGroup().addTo(map);
   const earthquakeGroup = L.layerGroup().addTo(map);
 
-  // 2. Chargement initial et écouteur de déplacement
+  // Initialisation du gestionnaire de vols en direct
+  const flightManager = new LiveFlightManager(map, L);
+
+  // 2. Écouteurs de mise à jour des secours et météo
   let updateTimeout = null;
-  const loadLiveData = () => {
+  const updateLiveData = () => {
     clearTimeout(updateTimeout);
     updateTimeout = setTimeout(() => {
-      fetchRealCityData(map, L, { flightsGroup, emergencyGroup });
+      const center = map.getCenter();
+      fetchCityWeather(center.lat, center.lng);
+
+      if (map.getZoom() >= 11) {
+        const bounds = map.getBounds();
+        fetchRealEmergencyServices(
+          bounds.getSouth(), bounds.getWest(),
+          bounds.getNorth(), bounds.getEast(),
+          L, emergencyGroup
+        );
+      } else {
+        emergencyGroup.clearLayers();
+      }
     }, 400);
   };
 
-  map.on('moveend', loadLiveData);
-  
-  // Lancer les séismes mondiaux (CORS Natively Allowed)
+  map.on('moveend', updateLiveData);
+  updateLiveData();
+
+  // Chargement des séismes mondiaux
   fetchRealEarthquakes(L, earthquakeGroup);
 
-  // Premier chargement immédiat
-  loadLiveData();
-
-  // 3. HUD et Recherche
-  injectHUDControls(map, darkLayer, satelliteLayer, { flightsGroup, emergencyGroup, earthquakeGroup });
+  // 3. Injection du HUD avec le bouton Vols relié au gestionnaire
+  injectHUDControls(map, darkLayer, satelliteLayer, emergencyGroup, earthquakeGroup, flightManager);
 
   const dummySurface = { globe: {}, enableLighting: false, show: true };
   const dummyCamera = { flyTo: () => {}, flyHome: () => map.flyTo([20, 0], 3) };
@@ -71,35 +84,134 @@ export async function createApplicationScene(options = {}) {
     globe: dummySurface,
     camera: dummyCamera,
     map: map,
-    destroy: () => map.remove(),
+    destroy: () => {
+      flightManager.stopTracking();
+      map.remove();
+    },
     isDestroyed: () => false
   };
 }
 
 /**
- * 📡 CHARGEMENT DE VRAIES DONNÉES EN DIRECT VIA PROXY CORS
+ * ✈️ GESTIONNAIRE DES VOLS EN DIRECT (Rafraîchissement & Orientation)
  */
-async function fetchRealCityData(map, L, layers) {
-  const bounds = map.getBounds();
-  const center = map.getCenter();
-  const s = bounds.getSouth(), w = bounds.getWest();
-  const n = bounds.getNorth(), e = bounds.getEast();
-
-  // Météo réelle (Déjà fonctionnelle)
-  fetchCityWeather(center.lat, center.lng);
-
-  // ✈️ 1. VOLS EN DIRECT (OpenSky via CORS Proxy)
-  if (map.getZoom() >= 8) {
-    fetchRealFlights(s, w, n, e, L, layers.flightsGroup);
-  } else {
-    layers.flightsGroup.clearLayers();
+class LiveFlightManager {
+  constructor(map, L) {
+    this.map = map;
+    this.L = L;
+    this.flightsLayer = L.layerGroup();
+    this.isActive = false;
+    this.refreshInterval = null;
+    this.refreshRateMs = 12000; // Rafraîchissement automatique toutes les 12s
   }
 
-  // 🚒 2. POLICE / POMPIERS / HÔPITAUX RÉELS (Overpass via GET/CORS Proxy)
-  if (map.getZoom() >= 11) {
-    fetchRealEmergencyServices(s, w, n, e, L, layers.emergencyGroup);
-  } else {
-    layers.emergencyGroup.clearLayers();
+  toggle() {
+    this.isActive = !this.isActive;
+    if (this.isActive) {
+      this.map.addLayer(this.flightsLayer);
+      this.startTracking();
+    } else {
+      this.stopTracking();
+      this.map.removeLayer(this.flightsLayer);
+      this.flightsLayer.clearLayers();
+      updateWidgetStat('flights', 'Désactivé');
+    }
+    return this.isActive;
+  }
+
+  startTracking() {
+    this.fetchLiveFlights();
+    if (this.refreshInterval) clearInterval(this.refreshInterval);
+    this.refreshInterval = setInterval(() => {
+      if (this.isActive) this.fetchLiveFlights();
+    }, this.refreshRateMs);
+
+    this.map.on('moveend', this.handleMapMove);
+  }
+
+  stopTracking() {
+    if (this.refreshInterval) {
+      clearInterval(this.refreshInterval);
+      this.refreshInterval = null;
+    }
+    this.map.off('moveend', this.handleMapMove);
+  }
+
+  handleMapMove = () => {
+    if (this.isActive) this.fetchLiveFlights();
+  };
+
+  async fetchLiveFlights() {
+    if (!this.isActive) return;
+
+    if (this.map.getZoom() < 6) {
+      this.flightsLayer.clearLayers();
+      updateWidgetStat('flights', 'Zoomez pour voir les vols');
+      return;
+    }
+
+    const bounds = this.map.getBounds();
+    const s = bounds.getSouth(), w = bounds.getWest();
+    const n = bounds.getNorth(), e = bounds.getEast();
+
+    const targetUrl = `https://opensky-network.org/api/states/all?lamin=${s}&lomin=${w}&lamax=${n}&lomax=${e}`;
+    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+
+    updateWidgetStat('flights', 'Mise à jour...');
+
+    try {
+      const response = await fetch(proxyUrl);
+      if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
+      const data = await response.json();
+
+      this.flightsLayer.clearLayers();
+
+      if (data && data.states && data.states.length > 0) {
+        let activeCount = 0;
+
+        data.states.slice(0, 50).forEach(flight => {
+          const [icao24, callsign, origin_country, time_pos, last_contact, longitude, latitude, baro_alt, on_ground, velocity, true_track] = flight;
+
+          if (latitude && longitude && !on_ground) {
+            activeCount++;
+            const flightName = callsign ? callsign.trim() : 'INCONNU';
+            const speedKmh = Math.round((velocity || 0) * 3.6);
+            const altitudeM = Math.round(baro_alt || 0);
+            const heading = Math.round(true_track || 0);
+
+            const airplaneIcon = this.L.divIcon({
+              html: `
+                <div style="transform: rotate(${heading}deg); font-size: 20px; line-height: 1; filter: drop-shadow(0 0 4px #00e5ff); cursor: pointer;">✈️</div>
+              `,
+              iconSize: [24, 24],
+              iconAnchor: [12, 12]
+            });
+
+            const marker = this.L.marker([latitude, longitude], { icon: airplaneIcon });
+            marker.bindPopup(`
+              <div style="background: #090d16; color: #e2e8f0; padding: 10px; border: 1px solid #00e5ff; border-radius: 6px; font-family: monospace; min-width: 180px;">
+                <div style="color:#00e5ff; font-weight:bold; font-size:14px; border-bottom:1px solid #1e293b; padding-bottom:4px; margin-bottom:6px;">
+                  ✈️ VOL : ${flightName}
+                </div>
+                <div><b>Pays :</b> ${origin_country}</div>
+                <div><b>Altitude :</b> ${altitudeM.toLocaleString()} m</div>
+                <div><b>Vitesse :</b> ${speedKmh} km/h</div>
+                <div><b>Cap :</b> ${heading}°</div>
+              </div>
+            `);
+
+            this.flightsLayer.addLayer(marker);
+          }
+        });
+
+        updateWidgetStat('flights', `${activeCount} avion(s) en direct`);
+      } else {
+        updateWidgetStat('flights', '0 avion sur le secteur');
+      }
+    } catch (error) {
+      console.warn("Erreur chargement vols :", error);
+      updateWidgetStat('flights', 'Recherche en cours...');
+    }
   }
 }
 
@@ -118,55 +230,6 @@ async function fetchCityWeather(lat, lon) {
     }
   } catch (err) {
     console.warn("Météo non accessible", err);
-  }
-}
-
-/**
- * ✈️ VOLS EN DIRECT RÉELS (OpenSky + Proxy CORS)
- */
-async function fetchRealFlights(s, w, n, e, L, layerGroup) {
-  const targetUrl = `https://opensky-network.org/api/states/all?lamin=${s}&lomin=${w}&lamax=${n}&lomax=${e}`;
-  const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
-
-  try {
-    const res = await fetch(proxyUrl);
-    const data = await res.json();
-
-    layerGroup.clearLayers();
-
-    if (data && data.states) {
-      let count = 0;
-      data.states.slice(0, 30).forEach(flight => {
-        const [icao, callsign, origin, time, lastContact, lon, lat, baroAlt, onGround, velocity, trueTrack] = flight;
-        if (lat && lon) {
-          count++;
-          const name = callsign ? callsign.trim() : 'FLIGHT';
-          const speed = Math.round((velocity || 0) * 3.6);
-          const alt = Math.round(baroAlt || 0);
-
-          const planeIcon = L.divIcon({
-            html: `<div style="transform: rotate(${trueTrack || 0}deg); color:#00e5ff; font-size:16px; text-shadow:0 0 4px #000;">✈️</div>`,
-            iconSize: [20, 20]
-          });
-
-          const marker = L.marker([lat, lon], { icon: planeIcon });
-          marker.bindPopup(`
-            <div style="color:#00e5ff; background:#0a101d; padding:8px; font-family:monospace;">
-              <strong>✈️ VOL RÉEL : ${name}</strong><br/>
-              <span>Pays d'origine : ${origin}</span><br/>
-              <span>Altitude : ${alt} m</span><br/>
-              <span>Vitesse : ${speed} km/h</span>
-            </div>
-          `);
-          layerGroup.addLayer(marker);
-        }
-      });
-      updateWidgetStat('flights', `${count} avions détectés`);
-    } else {
-      updateWidgetStat('flights', '0 avion sur la zone');
-    }
-  } catch (err) {
-    updateWidgetStat('flights', 'Recherche en cours...');
   }
 }
 
@@ -212,8 +275,7 @@ async function fetchRealEmergencyServices(s, w, n, e, L, layerGroup) {
         marker.bindPopup(`
           <div style="color:#fff; background:#0a101d; padding:8px; font-family:monospace;">
             <strong style="color:${color}">${icon} ${title}</strong><br/>
-            <span>Secteur : ${item.tags['addr:street'] || 'Zone Urbaine'}</span><br/>
-            <small style="color:#aaa;">BASE INFRASTRUCTURE RÉELLE</small>
+            <span>Secteur : ${item.tags['addr:street'] || 'Zone Urbaine'}</span>
           </div>
         `);
         layerGroup.addLayer(marker);
@@ -226,7 +288,7 @@ async function fetchRealEmergencyServices(s, w, n, e, L, layerGroup) {
 }
 
 /**
- * 🌋 SÉISMES EN DIRECT (USGS - Sans problème CORS)
+ * 🌋 SÉISMES EN DIRECT (USGS)
  */
 async function fetchRealEarthquakes(L, layerGroup) {
   try {
@@ -279,12 +341,12 @@ function updateCityWidget(data) {
 
   widget.style.display = 'block';
   widget.innerHTML = `
-    <div style="color:#00ffcc; font-weight:bold; margin-bottom:6px; display:flex; justify-content:space-between;">
-      <span>🔴 FLUX TACTIQUE EN DIRECT</span>
+    <div style="color:#00ffcc; font-weight:bold; margin-bottom:6px;">
+      🔴 FLUX TACTIQUE EN DIRECT
     </div>
     <div>🌡️ Température : <span style="color:#fff;">${data.temp}</span></div>
     <div>💨 Vent : <span style="color:#fff;">${data.wind}</span></div>
-    <div>✈️ Traffic Aérien : <span id="widget-flights" style="color:#00e5ff;">Analyse...</span></div>
+    <div>✈️ Traffic Aérien : <span id="widget-flights" style="color:#00e5ff;">Désactivé</span></div>
     <div>🚒 Secours / Police : <span id="widget-stations" style="color:#ff3333;">Analyse...</span></div>
   `;
 }
@@ -297,7 +359,7 @@ function updateWidgetStat(id, text) {
 /**
  * 🎛️ CONTROLES DU MENU HUD
  */
-function injectHUDControls(map, darkLayer, satelliteLayer, layers) {
+function injectHUDControls(map, darkLayer, satelliteLayer, emergencyGroup, earthquakeGroup, flightManager) {
   if (document.getElementById('hud-country-menu')) return;
 
   const hudMenu = document.createElement('div');
@@ -329,7 +391,7 @@ function injectHUDControls(map, darkLayer, satelliteLayer, layers) {
         <div class="hud-section">
           <label>📡 CALQUES TACTIQUES</label>
           <div class="hud-grid">
-            <button class="hud-btn highlight" id="btn-toggle-flights">✈️ Vols</button>
+            <button class="hud-btn" id="btn-toggle-flights">✈️ Vols</button>
             <button class="hud-btn highlight" id="btn-toggle-emergency">🚒 Secours</button>
             <button class="hud-btn highlight" id="btn-toggle-quake">🌋 Séismes</button>
           </div>
@@ -377,32 +439,33 @@ function injectHUDControls(map, darkLayer, satelliteLayer, layers) {
     map.addLayer(satelliteLayer);
   });
 
-  document.getElementById('btn-toggle-flights')?.addEventListener('click', (e) => {
-    if (map.hasLayer(layers.flightsGroup)) {
-      map.removeLayer(layers.flightsGroup);
-      e.target.classList.remove('highlight');
+  // Activation / Désactivation des vols en direct au clic
+  const flightsBtn = document.getElementById('btn-toggle-flights');
+  flightsBtn?.addEventListener('click', () => {
+    const active = flightManager.toggle();
+    if (active) {
+      flightsBtn.classList.add('highlight');
     } else {
-      map.addLayer(layers.flightsGroup);
-      e.target.classList.add('highlight');
+      flightsBtn.classList.remove('highlight');
     }
   });
 
   document.getElementById('btn-toggle-emergency')?.addEventListener('click', (e) => {
-    if (map.hasLayer(layers.emergencyGroup)) {
-      map.removeLayer(layers.emergencyGroup);
+    if (map.hasLayer(emergencyGroup)) {
+      map.removeLayer(emergencyGroup);
       e.target.classList.remove('highlight');
     } else {
-      map.addLayer(layers.emergencyGroup);
+      map.addLayer(emergencyGroup);
       e.target.classList.add('highlight');
     }
   });
 
   document.getElementById('btn-toggle-quake')?.addEventListener('click', (e) => {
-    if (map.hasLayer(layers.earthquakeGroup)) {
-      map.removeLayer(layers.earthquakeGroup);
+    if (map.hasLayer(earthquakeGroup)) {
+      map.removeLayer(earthquakeGroup);
       e.target.classList.remove('highlight');
     } else {
-      map.addLayer(layers.earthquakeGroup);
+      map.addLayer(earthquakeGroup);
       e.target.classList.add('highlight');
     }
   });
