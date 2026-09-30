@@ -2,29 +2,33 @@ import * as Cesium from 'cesium';
 import { createApplicationViewer } from './viewer.js';
 
 /**
- * Scène autonome multi-format (Carte 2D, Relief 2.5D, Globe 3D)
+ * Scène 2D Carte Tactique & Relief Militaire
+ * - 100% Autonome (Désactivation totale des requêtes Ion)
+ * - Compatibilité garantie avec application.js (export createScene + createApplicationScene)
  */
-export async function createApplicationScene({ googleApiKey, cesiumToken } = {}) {
+async function initScene({ googleApiKey, cesiumToken } = {}) {
   const loaderStatus = document.querySelector('#loading-loaderStatus');
   const creditContainer = document.createElement('div');
   creditContainer.className = 'cesium-credit-container-custom';
   document.body.appendChild(creditContainer);
 
-  // Désactiver Cesium Ion pour éviter les erreurs de clés réseau
-  Cesium.Ion.defaultAccessToken = cesiumToken || '';
+  // 1. Désactiver totalement les jetons Ion pour bloquer les requêtes réseau invalides
+  Cesium.Ion.defaultAccessToken = '';
 
-  // Fond de carte sombre tactique ultra-léger (CartoDB / OpenStreetMap)
-  const darkImagery = new Cesium.UrlTemplateImageryProvider({
-    url: 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-    maximumLevel: 19,
-    credit: 'CartoDB',
+  // 2. Fond de carte 2D Topographique / Relief Militaire gratuit (OpenTopoMap)
+  const militaryReliefImagery = new Cesium.UrlTemplateImageryProvider({
+    url: 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png',
+    maximumLevel: 17,
+    credit: 'OpenTopoMap',
   });
 
-  // Initialisation du Viewer
+  // 3. Initialisation forcée en Carte 2D sans relief 3D lourd
   const viewer = createApplicationViewer({
     container: 'cesiumContainer',
     creditContainer,
-    imageryProvider: darkImagery,
+    imageryProvider: militaryReliefImagery,
+    terrainProvider: new Cesium.EllipsoidTerrainProvider(), // Désactive le relief 3D Ion
+    sceneMode: Cesium.SceneMode.SCENE2D, // Démarrage immédiat en 2D Carte Tactique
     baseLayerPicker: false,
     geocoder: false,
     timeline: false,
@@ -34,14 +38,14 @@ export async function createApplicationScene({ googleApiKey, cesiumToken } = {})
     homeButton: false,
   });
 
-  // Nettoyage des éléments célestes qui font planter le rendu d'image
+  // 4. Masquer le fond de ciel et étoiles pour accélérer le rendu 2D
   viewer.scene.skyBox = undefined;
   viewer.scene.sun = undefined;
   viewer.scene.moon = undefined;
   viewer.scene.skyAtmosphere = undefined;
   viewer.scene.backgroundColor = Cesium.Color.BLACK;
 
-  // Anti-crash de rendu
+  // 5. Protections anti-crash du moteur de rendu
   viewer.scene.rethrowRenderErrors = false;
   viewer.useDefaultRenderLoop = true;
   viewer.scene.globe.show = true;
@@ -49,19 +53,21 @@ export async function createApplicationScene({ googleApiKey, cesiumToken } = {})
 
   if (viewer.scene.renderError) {
     viewer.scene.renderError.addEventListener((scene, error) => {
-      console.warn('Avertissement de rendu ignoré :', error);
+      console.warn('Rendu 2D (avertissement ignoré) :', error);
     });
   }
 
-  // Masquer le loader
+  // Masquer le message de chargement
   if (loaderStatus) loaderStatus.style.display = 'none';
 
-  // Injecter le menu avec sélecteur 2D / 3D / Relief
+  // 6. Injecter le menu tactile "God's Eye Control"
   injectCountryMenu(viewer);
 
-  // Attacher .surface et retourner l'objet complet pour application.js
+  // 7. Attacher les propriétés directement sur le viewer
   viewer.surface = viewer.scene.globe;
+  viewer.globe = viewer.scene.globe;
 
+  // 8. Objet de retour complet exigé par application.js
   return {
     viewer: viewer,
     scene: viewer.scene,
@@ -76,7 +82,7 @@ export async function createApplicationScene({ googleApiKey, cesiumToken } = {})
 }
 
 /**
- * Menu tactile : Sélecteur 2D/3D + Navigation Pays
+ * Menu tactile : Styles de Cartes (Relief / Sombre) + Navigation
  */
 function injectCountryMenu(viewer) {
   if (document.getElementById('hud-country-menu')) return;
@@ -86,13 +92,21 @@ function injectCountryMenu(viewer) {
   hudMenu.innerHTML = `
     <div class="hud-panel">
       <div class="hud-header">
-        <span>🌍 GOD'S EYE - CONTROL</span>
+        <span>🎖️ GOD'S EYE - CARTE TACTIQUE</span>
         <button id="hud-toggle-btn">☰</button>
       </div>
       <div class="hud-body" id="hud-body">
         
         <div class="hud-section">
-          <label>📐 MODE D'AFFICHAGE</label>
+          <label>🎨 STYLE DE CARTE</label>
+          <div class="hud-grid">
+            <button class="hud-btn highlight" id="btn-style-topo">🏔️ Relief / Topo</button>
+            <button class="hud-btn" id="btn-style-dark">🕶️ Sombre Tactique</button>
+          </div>
+        </div>
+
+        <div class="hud-section">
+          <label>🌐 MODE VUE</label>
           <div class="hud-grid">
             <button class="hud-btn highlight" id="btn-mode-2d">🗺️ Carte 2D</button>
             <button class="hud-btn" id="btn-mode-3d">🌐 Globe 3D</button>
@@ -100,7 +114,7 @@ function injectCountryMenu(viewer) {
         </div>
 
         <div class="hud-section">
-          <label>SELECTEUR DE PAYS</label>
+          <label>SÉLECTEUR DE PAYS</label>
           <select id="country-select" class="hud-select">
             <option value="">-- Choisir un pays --</option>
             <option value="2.3522,48.8566,1200000">🇫🇷 France</option>
@@ -129,7 +143,7 @@ function injectCountryMenu(viewer) {
 
         <div class="hud-section">
           <label>⚙️ CONTRÔLES</label>
-          <button class="hud-btn highlight" id="btn-reset-view">🎯 Recentrer Vue</button>
+          <button class="hud-btn highlight" id="btn-reset-view">🎯 Vue Globale</button>
         </div>
       </div>
     </div>
@@ -137,14 +151,34 @@ function injectCountryMenu(viewer) {
 
   document.body.appendChild(hudMenu);
 
-  // --- ÉVÉNEMENTS DU MENU ---
+  // --- ÉVÉNEMENTS ---
 
-  // Ouvrir / Réduire le menu
   document.getElementById('hud-toggle-btn').addEventListener('click', () => {
     document.getElementById('hud-body').classList.toggle('collapsed');
   });
 
-  // Basculer entre Carte 2D et Globe 3D
+  // Basculer le style de carte (Relief vs Sombre)
+  document.getElementById('btn-style-topo').addEventListener('click', (e) => {
+    viewer.imageryLayers.removeAll();
+    viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+      url: 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png',
+      maximumLevel: 17,
+    }));
+    document.getElementById('btn-style-topo').classList.add('highlight');
+    document.getElementById('btn-style-dark').classList.remove('highlight');
+  });
+
+  document.getElementById('btn-style-dark').addEventListener('click', (e) => {
+    viewer.imageryLayers.removeAll();
+    viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+      url: 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+      maximumLevel: 19,
+    }));
+    document.getElementById('btn-style-dark').classList.add('highlight');
+    document.getElementById('btn-style-topo').classList.remove('highlight');
+  });
+
+  // Basculer 2D / 3D
   document.getElementById('btn-mode-2d').addEventListener('click', () => {
     viewer.scene.morphTo2D(1.0);
   });
@@ -184,3 +218,8 @@ function flyToLocation(viewer, lon, lat, alt) {
     duration: 2,
   });
 }
+
+// Exports multiples pour éliminer les erreurs de nom dans application.js
+export const createApplicationScene = initScene;
+export const createScene = initScene;
+export default initScene;
