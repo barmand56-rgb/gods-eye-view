@@ -1,5 +1,5 @@
 /**
- * God's Eye - Module Tactique Leaflet avec Caméras et Alertes d'Urgences
+ * God's Eye - Worldwide Command Center (City-Precision & Realtime OSINT)
  */
 export async function createApplicationScene(options = {}) {
   const loaderStatus = document.querySelector('#loading-loaderStatus');
@@ -17,7 +17,7 @@ export async function createApplicationScene(options = {}) {
 
   const L = window.L;
 
-  // 1. Initialisation de la carte
+  // 1. Initialisation de la Carte Mondiale
   const map = L.map('cesiumContainer', {
     center: [20, 0],
     zoom: 3,
@@ -25,7 +25,7 @@ export async function createApplicationScene(options = {}) {
     attributionControl: false
   });
 
-  // Fonds de carte
+  // Base Layers
   const darkLayer = L.tileLayer(
     'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
     { maxZoom: 16 }
@@ -36,26 +36,40 @@ export async function createApplicationScene(options = {}) {
     { maxZoom: 18 }
   );
 
-  // 2. Groupes de calques pour les Caméras et Urgences
+  // Groupes de calques
+  const localEmergencyGroup = L.layerGroup().addTo(map);
+  const earthquakeGroup = L.layerGroup().addTo(map);
   const cameraGroup = L.layerGroup().addTo(map);
-  const emergencyGroup = L.layerGroup().addTo(map);
 
-  // 3. Charger les Caméras et les Urgences
-  loadPublicCameras(map, L, cameraGroup);
-  loadGlobalEmergencyIncidents(map, L, emergencyGroup);
-  startLiveEmergencySimulation(map, L, emergencyGroup);
+  // 2. Chargement des données mondiales globales
+  loadEarthquakes(L, earthquakeGroup);
+  loadGlobalWebcams(L, cameraGroup);
 
-  // 4. Injecter le menu HUD enrichi
-  injectHUDControls(map, darkLayer, satelliteLayer, cameraGroup, emergencyGroup);
+  // 3. Système d'extraction dynamique d'infrastructures par ville
+  let fetchTimeout = null;
+  const updateCityData = () => {
+    if (map.getZoom() >= 11) {
+      clearTimeout(fetchTimeout);
+      fetchTimeout = setTimeout(() => {
+        fetchRealCityInfrastructures(map, L, localEmergencyGroup);
+      }, 600); // Debounce de 600ms pour préserver les requêtes
+    } else {
+      localEmergencyGroup.clearLayers();
+    }
+  };
 
-  // Simulation pour assurer la compatibilité
+  map.on('moveend', updateCityData);
+
+  // 4. Inserer le HUD avec Barre de Recherche Globale
+  injectHUDControls(map, darkLayer, satelliteLayer, cameraGroup, earthquakeGroup, localEmergencyGroup);
+
+  // Mock de compatibilité application.js
   const dummySurface = { globe: {}, enableLighting: false, show: true };
   const dummyCamera = { flyTo: () => {}, flyHome: () => map.flyTo([20, 0], 3) };
-  const dummyScene = { surface: dummySurface, globe: dummySurface, camera: dummyCamera };
 
   return {
     viewer: map,
-    scene: dummyScene,
+    scene: { surface: dummySurface, globe: dummySurface, camera: dummyCamera },
     surface: dummySurface,
     globe: dummySurface,
     camera: dummyCamera,
@@ -66,139 +80,170 @@ export async function createApplicationScene(options = {}) {
 }
 
 /**
- * 📹 CHARGEMENT DES CAMÉRAS DE SURVEILLANCE / WEBCAMS
+ * 🔍 RECHERCHE MONDIALE DE VILLE (API Nominatim - OpenStreetMap)
  */
-function loadPublicCameras(map, L, layerGroup) {
-  const cameraIcon = L.divIcon({
-    className: 'custom-cam-icon',
-    html: `<div style="background:#00ffcc; width:12px; height:12px; border-radius:50%; border:2px solid #000; box-shadow:0 0 10px #00ffcc;"></div>`,
-    iconSize: [12, 12]
-  });
+async function searchGlobalCity(query, map) {
+  if (!query || query.trim().length === 0) return;
 
-  const cameras = [
-    {
-      name: "CAM-01 : Paris - Tour Eiffel / Champ de Mars",
-      coords: [48.8584, 2.2945],
-      streamUrl: "https://www.youtube.com/embed/live_stream?channel=UC1yC2A9U_yBv6Y130fA1Pgg"
-    },
-    {
-      name: "CAM-02 : New York - Times Square Central",
-      coords: [40.7580, -73.9855],
-      streamUrl: "https://www.youtube.com/embed/1-iS7LArMPA"
-    },
-    {
-      name: "CAM-03 : Tokyo - Shibuya Crossing",
-      coords: [35.6595, 139.7004],
-      streamUrl: "https://www.youtube.com/embed/H43glf0144k"
-    },
-    {
-      name: "CAM-04 : Dubaï - Downtown / Burj Khalifa",
-      coords: [25.1972, 55.2744],
-      streamUrl: "https://www.youtube.com/embed/live_stream"
+  try {
+    const response = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`
+    );
+    const results = await response.json();
+
+    if (results && results.length > 0) {
+      const bestMatch = results[0];
+      const lat = parseFloat(bestMatch.lat);
+      const lon = parseFloat(bestMatch.lon);
+      map.flyTo([lat, lon], 12, { duration: 1.8 });
+    } else {
+      alert("⚠️ Ville ou emplacement non trouvé.");
     }
-  ];
-
-  cameras.forEach(cam => {
-    const marker = L.marker(cam.coords, { icon: cameraIcon });
-    const popupContent = `
-      <div style="color:#00ffcc; background:#0a101d; padding:10px; border-radius:6px; font-family:monospace; min-width:260px;">
-        <strong style="display:block; margin-bottom:6px;">📹 ${cam.name}</strong>
-        <div style="position:relative; padding-bottom:56.25%; height:0; overflow:hidden; border:1px solid #00ffcc;">
-          <iframe src="${cam.streamUrl}" style="position:absolute; top:0; left:0; width:100%; height:100%; border:0;" allowfullscreen></iframe>
-        </div>
-        <small style="color:#aaa; display:block; margin-top:5px;">STATUT: FLUX TACTIQUE EN DIRECT</small>
-      </div>
-    `;
-    marker.bindPopup(popupContent);
-    layerGroup.addLayer(marker);
-  });
+  } catch (err) {
+    console.error("Erreur de géocodage:", err);
+  }
 }
 
 /**
- * 🚨 CHARGEMENT DES ALERTES D'URGENCES MONDIALES RÉELLES (GDACS API)
+ * 🚒 EXTRACTION EN TEMPS RÉEL DES INFRASTRUCTURES DE LA VILLE (Overpass API)
+ * Récupère les vrais Pompiers, Hôpitaux et Commissariats du secteur affiché
  */
-async function loadGlobalEmergencyIncidents(map, L, layerGroup) {
-  const fireIcon = L.divIcon({
-    className: 'custom-fire-icon',
-    html: `<div style="background:#ff3333; width:14px; height:14px; border-radius:50%; border:2px solid #fff; box-shadow:0 0 12px #ff3333; animation: pulse 1s infinite;"></div>`,
-    iconSize: [14, 14]
-  });
+async function fetchRealCityInfrastructures(map, L, layerGroup) {
+  const bounds = map.getBounds();
+  const s = bounds.getSouth();
+  const w = bounds.getWest();
+  const n = bounds.getNorth();
+  const e = bounds.getEast();
+
+  // Requête Overpass pour les éléments "amenity" urgences
+  const query = `
+    [out:json][timeout:10];
+    (
+      node["amenity"="fire_station"](${s},${w},${n},${e});
+      node["amenity"="hospital"](${s},${w},${n},${e});
+      node["amenity"="police"](${s},${w},${n},${e});
+    );
+    out body 40;
+  `;
 
   try {
-    const response = await fetch('https://www.gdacs.org/gdacsapi/api/events/geteventlist/M');
-    const data = await response.json();
+    const res = await fetch('https://overpass-api.de/api/interpreter', {
+      method: 'POST',
+      body: query
+    });
+    const data = await res.json();
 
-    if (data && data.features) {
-      data.features.slice(0, 25).forEach(event => {
-        const coords = [event.geometry.coordinates[1], event.geometry.coordinates[0]];
-        const props = event.properties;
-        
-        const marker = L.marker(coords, { icon: fireIcon });
+    layerGroup.clearLayers();
+
+    if (data && data.elements) {
+      data.elements.forEach(item => {
+        const type = item.tags.amenity;
+        let iconHtml = '';
+        let title = '';
+        let color = '';
+
+        if (type === 'fire_station') {
+          iconHtml = '🚒';
+          title = item.tags.name || 'Caserne de Pompiers';
+          color = '#ff3333';
+        } else if (type === 'hospital') {
+          iconHtml = '🏥';
+          title = item.tags.name || 'Hôpital / Urgences';
+          color = '#3399ff';
+        } else if (type === 'police') {
+          iconHtml = '🚓';
+          title = item.tags.name || 'Commissariat / Police';
+          color = '#ffcc00';
+        }
+
+        const customIcon = L.divIcon({
+          html: `<div style="background:${color}; width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center; border:2px solid #fff; box-shadow:0 0 8px ${color}; font-size:12px;">${iconHtml}</div>`,
+          iconSize: [22, 22]
+        });
+
+        const marker = L.marker([item.lat, item.lon], { icon: customIcon });
         marker.bindPopup(`
-          <div style="color:#ff4444; background:#0a101d; padding:10px; border-radius:6px; font-family:monospace;">
-            <strong>🚨 INTERVENTION INTERNATIONALE</strong><br/>
-            <span>Type : ${props.eventname || 'Incident majeur'}</span><br/>
-            <span>Pays : ${props.country || 'Zone Internationale'}</span><br/>
-            <span>Niveau d'alerte : ${props.alertlevel || 'ROUGE'}</span>
+          <div style="color:#fff; background:#0a101d; padding:8px; font-family:monospace;">
+            <strong style="color:${color}">${iconHtml} ${title}</strong><br/>
+            <span>Secteur : ${item.tags['addr:city'] || 'Zone Urbaine'}</span><br/>
+            <small style="color:#888;">INFRASTRUCTURE TACTIQUE RÉELLE</small>
           </div>
         `);
         layerGroup.addLayer(marker);
       });
     }
   } catch (err) {
-    console.warn("API GDACS indisponible, bascule sur le simulateur d'interventions.");
+    console.warn("Overpass API temporairement indisponible pour ce secteur", err);
   }
 }
 
 /**
- * 🚒 SIMULATEUR EN TEMPS RÉEL DE DISPATCH DES SECOURS (POMPIERS / POLICE / SAMU)
+ * 🌋 SÉISMES MONDIAUX
  */
-function startLiveEmergencySimulation(map, L, layerGroup) {
-  const emergencyTypes = [
-    { title: "🚒 Incendie Urbain / Pompiers", color: "#ff4444" },
-    { title: "🚑 Urgence Médicale SAMU", color: "#3388ff" },
-    { title: "🚓 Intervention Forces de l'Ordre", color: "#ffbb00" },
-    { title: "🔥 Départ de Feu de Forêt", color: "#ff6600" }
-  ];
+async function loadEarthquakes(L, layerGroup) {
+  try {
+    const res = await fetch('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson');
+    const data = await res.json();
 
-  const cities = [
-    { name: "Paris", lat: 48.8566, lon: 2.3522 },
-    { name: "Marseille", lat: 43.2965, lon: 5.3698 },
-    { name: "New York", lat: 40.7128, lon: -74.0060 },
-    { name: "Londres", lat: 51.5074, lon: -0.1278 },
-    { name: "Tokyo", lat: 35.6762, lon: 139.6503 }
-  ];
+    data.features.forEach(eq => {
+      const coords = [eq.geometry.coordinates[1], eq.geometry.coordinates[0]];
+      const mag = eq.properties.mag;
+      const radius = Math.max(mag * 3.5, 5);
+      const color = mag >= 5 ? '#ff0055' : mag >= 3 ? '#ffaa00' : '#ffff00';
 
-  // Génère une nouvelle intervention toutes les 8 secondes
-  setInterval(() => {
-    const city = cities[Math.floor(Math.random() * cities.length)];
-    const type = emergencyTypes[Math.floor(Math.random() * emergencyTypes.length)];
-    
-    // Décalage aléatoire autour de la ville
-    const lat = city.lat + (Math.random() - 0.5) * 0.1;
-    const lon = city.lon + (Math.random() - 0.5) * 0.1;
-
-    const icon = L.divIcon({
-      html: `<div style="background:${type.color}; width:12px; height:12px; border-radius:50%; border:2px solid #fff; box-shadow:0 0 10px ${type.color};"></div>`,
-      iconSize: [12, 12]
+      const circle = L.circleMarker(coords, {
+        radius: radius,
+        fillColor: color,
+        color: '#ffffff',
+        weight: 1,
+        fillOpacity: 0.6
+      }).bindPopup(`
+        <div style="color:#fff; background:#0a101d; padding:8px; font-family:monospace;">
+          <strong style="color:${color}">🌋 SÉISME MAGNITUDE ${mag}</strong><br/>
+          <span>Lieu : ${eq.properties.place}</span>
+        </div>
+      `);
+      layerGroup.addLayer(circle);
     });
-
-    const marker = L.marker([lat, lon], { icon }).bindPopup(`
-      <div style="color:#fff; background:#0a101d; padding:10px; border-radius:6px; font-family:monospace;">
-        <strong style="color:${type.color};">${type.title}</strong><br/>
-        <span>Secteur : ${city.name}</span><br/>
-        <small style="color:#aaa;">DISPATCH SECOURS EN COURS</small>
-      </div>
-    `);
-
-    layerGroup.addLayer(marker);
-  }, 8000);
+  } catch (e) {
+    console.warn("USGS unavailable", e);
+  }
 }
 
 /**
- * 🎛️ MENU HUD AVEC CONTRÔLE DES CALQUES (CAMÉRAS / URGENCES)
+ * 📹 CAMÉRAS MONDIALES
  */
-function injectHUDControls(map, darkLayer, satelliteLayer, cameraGroup, emergencyGroup) {
+function loadGlobalWebcams(L, layerGroup) {
+  const cameraIcon = L.divIcon({
+    html: `<div style="background:#00ffcc; width:12px; height:12px; border-radius:50%; border:2px solid #000; box-shadow:0 0 10px #00ffcc;"></div>`,
+    iconSize: [12, 12]
+  });
+
+  const cams = [
+    { name: "Paris - Tour Eiffel", coords: [48.8584, 2.2945], url: "https://www.youtube.com/embed/live_stream?channel=UC1yC2A9U_yBv6Y130fA1Pgg" },
+    { name: "New York - Times Square", coords: [40.7580, -73.9855], url: "https://www.youtube.com/embed/1-iS7LArMPA" },
+    { name: "Tokyo - Shibuya", coords: [35.6595, 139.7004], url: "https://www.youtube.com/embed/H43glf0144k" },
+    { name: "London - Abbey Road", coords: [51.5320, -0.1773], url: "https://www.youtube.com/embed/live_stream" }
+  ];
+
+  cams.forEach(cam => {
+    const marker = L.marker(cam.coords, { icon: cameraIcon });
+    marker.bindPopup(`
+      <div style="color:#00ffcc; background:#0a101d; padding:8px; font-family:monospace; min-width:240px;">
+        <strong>📹 ${cam.name}</strong>
+        <div style="position:relative; padding-bottom:56.25%; height:0; overflow:hidden; margin-top:5px;">
+          <iframe src="${cam.url}" style="position:absolute; top:0; left:0; width:100%; height:100%; border:0;" allowfullscreen></iframe>
+        </div>
+      </div>
+    `);
+    layerGroup.addLayer(marker);
+  });
+}
+
+/**
+ * 🎛️ CONTRÔLE HUD & BARRE DE RECHERCHE UNIVERSELLE
+ */
+function injectHUDControls(map, darkLayer, satelliteLayer, cameraGroup, earthquakeGroup, localEmergencyGroup) {
   if (document.getElementById('hud-country-menu')) return;
 
   const hudMenu = document.createElement('div');
@@ -206,11 +251,19 @@ function injectHUDControls(map, darkLayer, satelliteLayer, cameraGroup, emergenc
   hudMenu.innerHTML = `
     <div class="hud-panel">
       <div class="hud-header">
-        <span>🎖️ GOD'S EYE - TACTICAL DISPATCH</span>
+        <span>🎖️ GOD'S EYE - GLOBAL COMMAND</span>
         <button id="hud-toggle-btn">☰</button>
       </div>
       <div class="hud-body" id="hud-body">
         
+        <div class="hud-section">
+          <label>🔍 RECHERCHE MONDIALE (VILLE / PAYS)</label>
+          <div style="display:flex; gap:5px; margin-top:5px;">
+            <input type="text" id="hud-search-input" placeholder="ex: Paris, Tokyo, Montreal..." style="flex:1; background:#0a101d; border:1px solid #00ffcc; color:#fff; padding:6px; border-radius:4px; font-family:monospace;" />
+            <button id="hud-search-btn" class="hud-btn highlight" style="padding:0 10px;">🔎</button>
+          </div>
+        </div>
+
         <div class="hud-section">
           <label>🎨 STYLE DE CARTE</label>
           <div class="hud-grid">
@@ -220,22 +273,11 @@ function injectHUDControls(map, darkLayer, satelliteLayer, cameraGroup, emergenc
         </div>
 
         <div class="hud-section">
-          <label>📡 CALQUES D'ACQUISITION</label>
+          <label>📡 CALQUES D'OBSERVATION</label>
           <div class="hud-grid">
-            <button class="hud-btn highlight" id="btn-toggle-cams">📹 Caméras</button>
-            <button class="hud-btn highlight" id="btn-toggle-emergencies">🚨 Urgences</button>
+            <button class="hud-btn highlight" id="btn-toggle-local">🚑 Incidents locaux</button>
+            <button class="hud-btn highlight" id="btn-toggle-quake">🌋 Séismes</button>
           </div>
-        </div>
-
-        <div class="hud-section">
-          <label>SÉLECTEUR DE PAYS</label>
-          <select id="country-select" class="hud-select">
-            <option value="">-- Choisir un pays --</option>
-            <option value="48.8566,2.3522,6">🇫🇷 France</option>
-            <option value="37.0902,-95.7129,4">🇺🇸 États-Unis</option>
-            <option value="36.2048,138.2529,5">🇯🇵 Japon</option>
-            <option value="25.2048,55.2708,8">🇦🇪 Émirats Arabes Unis</option>
-          </select>
         </div>
 
         <div class="hud-section">
@@ -251,7 +293,20 @@ function injectHUDControls(map, darkLayer, satelliteLayer, cameraGroup, emergenc
     document.getElementById('hud-body')?.classList.toggle('collapsed');
   });
 
-  // Contrôle des cartes
+  // Action de recherche
+  const triggerSearch = () => {
+    const input = document.getElementById('hud-search-input');
+    if (input && input.value) {
+      searchGlobalCity(input.value, map);
+    }
+  };
+
+  document.getElementById('hud-search-btn')?.addEventListener('click', triggerSearch);
+  document.getElementById('hud-search-input')?.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') triggerSearch();
+  });
+
+  // Changement de mode de carte
   document.getElementById('btn-style-dark')?.addEventListener('click', () => {
     if (map.hasLayer(satelliteLayer)) map.removeLayer(satelliteLayer);
     map.addLayer(darkLayer);
@@ -262,37 +317,29 @@ function injectHUDControls(map, darkLayer, satelliteLayer, cameraGroup, emergenc
     map.addLayer(satelliteLayer);
   });
 
-  // Toggle Caméras
-  document.getElementById('btn-toggle-cams')?.addEventListener('click', (e) => {
-    if (map.hasLayer(cameraGroup)) {
-      map.removeLayer(cameraGroup);
+  // Toggles de calques
+  document.getElementById('btn-toggle-local')?.addEventListener('click', (e) => {
+    if (map.hasLayer(localEmergencyGroup)) {
+      map.removeLayer(localEmergencyGroup);
       e.target.classList.remove('highlight');
     } else {
-      map.addLayer(cameraGroup);
+      map.addLayer(localEmergencyGroup);
       e.target.classList.add('highlight');
     }
   });
 
-  // Toggle Urgences
-  document.getElementById('btn-toggle-emergencies')?.addEventListener('click', (e) => {
-    if (map.hasLayer(emergencyGroup)) {
-      map.removeLayer(emergencyGroup);
+  document.getElementById('btn-toggle-quake')?.addEventListener('click', (e) => {
+    if (map.hasLayer(earthquakeGroup)) {
+      map.removeLayer(earthquakeGroup);
       e.target.classList.remove('highlight');
     } else {
-      map.addLayer(emergencyGroup);
+      map.addLayer(earthquakeGroup);
       e.target.classList.add('highlight');
     }
-  });
-
-  document.getElementById('country-select')?.addEventListener('change', (e) => {
-    const val = e.target.value;
-    if (!val) return;
-    const [lat, lon, zoom] = val.split(',').map(Number);
-    map.flyTo([lat, lon], zoom, { duration: 1.5 });
   });
 
   document.getElementById('btn-reset-view')?.addEventListener('click', () => {
-    map.flyTo([20, 0], 3, { duration: 1 });
+    map.flyTo([20, 0], 3, { duration: 1.2 });
   });
 }
 
