@@ -2,36 +2,59 @@ import * as Cesium from 'cesium';
 import { createApplicationViewer } from './viewer.js';
 
 /**
- * Scène 3D ultra-légère avec menu HUD tactile (Caméras, Radars, Modes)
+ * Scène 3D ultra-légère avec OpenStreetMap (sans dépendance Ion/Google)
  */
 export async function createApplicationScene({ googleApiKey, cesiumToken } = {}) {
   const creditContainer = document.createElement('div');
   creditContainer.className = 'cesium-credit-container-custom';
   document.body.appendChild(creditContainer);
 
-  // 1. Initialiser le viewer avec une imagerie OpenStreetMap / Satellite légère
+  // 1. Définir un fond de carte gratuit et illimité (OpenStreetMap)
+  const osmProvider = new Cesium.UrlTemplateImageryProvider({
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    maximumLevel: 19,
+  });
+
+  // 2. Initialiser le viewer Cesium
   const viewer = createApplicationViewer({
     container: 'cesiumContainer',
     creditContainer,
+    imageryProvider: osmProvider,
+    baseLayerPicker: false,
+    geocoder: false,
   });
 
-  // Sécurité anti-crash
+  // S'assurer que la couche d'imagerie est bien présente
+  if (viewer.imageryLayers.length === 0) {
+    viewer.imageryLayers.addImageryProvider(osmProvider);
+  }
+
+  // 3. Sécurité anti-crash
   viewer.scene.rethrowRenderErrors = false;
   viewer.useDefaultRenderLoop = true;
   viewer.scene.globe.show = true;
 
-  // Masquer le loader s'il existe
+  // 4. Correctif pour application.js (évite l'erreur "reading surface")
+  viewer.surface = viewer.scene.globe;
+  viewer.scene.surface = viewer.scene.globe;
+
+  // Masquer le message de chargement
   const loaderStatus = document.querySelector('#loading-loaderStatus');
   if (loaderStatus) loaderStatus.style.display = 'none';
 
-  // 2. Injecter le Menu Tactile HUD
+  // 5. Injecter le Menu Tactique HUD
   injectHUDMenu(viewer);
 
-  return viewer;
+  // Renvoyer l'objet compatible avec application.js
+  return Object.assign(viewer, {
+    viewer: viewer,
+    scene: viewer.scene,
+    surface: viewer.scene.globe,
+  });
 }
 
 /**
- * Création et injection du menu interactif (Caméras, Radars, etc.)
+ * Création et injection du menu interactif
  */
 function injectHUDMenu(viewer) {
   if (document.getElementById('hud-tactical-menu')) return;
@@ -68,43 +91,36 @@ function injectHUDMenu(viewer) {
 
   document.body.appendChild(hudMenu);
 
-  // --- ÉVÉNEMENTS DU MENU ---
-
-  // Ouvrir / Réduire le menu
-  const toggleBtn = document.getElementById('hud-toggle-btn');
-  const hudBody = document.getElementById('hud-body');
-  toggleBtn.addEventListener('click', () => {
-    hudBody.classList.toggle('collapsed');
+  // Événements des boutons
+  document.getElementById('hud-toggle-btn').addEventListener('click', () => {
+    document.getElementById('hud-body').classList.toggle('collapsed');
   });
 
-  // Presets Caméras (FlyTo)
   document.getElementById('btn-cam-paris').addEventListener('click', () => {
     viewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(2.3522, 48.8566, 1500),
-      orientation: { heading: Cesium.Math.toRadians(0), pitch: Cesium.Math.toRadians(-35) }
+      destination: Cesium.Cartesian3.fromDegrees(2.3522, 48.8566, 3000),
+      orientation: { pitch: Cesium.Math.toRadians(-45) }
     });
   });
 
   document.getElementById('btn-cam-ny').addEventListener('click', () => {
     viewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(-74.006, 40.7128, 1500),
-      orientation: { heading: Cesium.Math.toRadians(0), pitch: Cesium.Math.toRadians(-35) }
+      destination: Cesium.Cartesian3.fromDegrees(-74.006, 40.7128, 3000),
+      orientation: { pitch: Cesium.Math.toRadians(-45) }
     });
   });
 
   document.getElementById('btn-cam-tokyo').addEventListener('click', () => {
     viewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(139.6917, 35.6895, 1500),
-      orientation: { heading: Cesium.Math.toRadians(0), pitch: Cesium.Math.toRadians(-35) }
+      destination: Cesium.Cartesian3.fromDegrees(139.6917, 35.6895, 3000),
+      orientation: { pitch: Cesium.Math.toRadians(-45) }
     });
   });
 
-  // Recentrer la vue globale
   document.getElementById('btn-reset-view').addEventListener('click', () => {
     viewer.camera.flyHome(1.5);
   });
 
-  // Basculer la grille tactile
   let wireframe = false;
   document.getElementById('btn-wireframe-toggle').addEventListener('click', (e) => {
     wireframe = !wireframe;
@@ -112,7 +128,6 @@ function injectHUDMenu(viewer) {
     e.target.textContent = wireframe ? '🌐 Grille: ACTIVE' : '🌐 Grille Tactique';
   });
 
-  // Toggle Radar (Simulation de couche radar)
   let radarActive = false;
   document.getElementById('btn-radar-toggle').addEventListener('click', (e) => {
     radarActive = !radarActive;
