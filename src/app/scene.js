@@ -2,20 +2,25 @@ import * as Cesium from 'cesium';
 import { createApplicationViewer } from './viewer.js';
 
 /**
- * Scène 3D ultra-légère avec OpenStreetMap (sans dépendance Ion/Google)
+ * Scène 3D ultra-légère et stable (OpenStreetMap + Anti-crash)
  */
 export async function createApplicationScene({ googleApiKey, cesiumToken } = {}) {
   const creditContainer = document.createElement('div');
   creditContainer.className = 'cesium-credit-container-custom';
   document.body.appendChild(creditContainer);
 
-  // 1. Définir un fond de carte gratuit et illimité (OpenStreetMap)
+  // 1. Définir un token Cesium s'il existe
+  if (cesiumToken) {
+    Cesium.Ion.defaultAccessToken = cesiumToken;
+  }
+
+  // 2. Imagerie OpenStreetMap gratuite (ne nécessite aucune clé API)
   const osmProvider = new Cesium.UrlTemplateImageryProvider({
     url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     maximumLevel: 19,
   });
 
-  // 2. Initialiser le viewer Cesium
+  // 3. Initialisation du viewer Cesium
   const viewer = createApplicationViewer({
     container: 'cesiumContainer',
     creditContainer,
@@ -24,37 +29,32 @@ export async function createApplicationScene({ googleApiKey, cesiumToken } = {})
     geocoder: false,
   });
 
-  // S'assurer que la couche d'imagerie est bien présente
-  if (viewer.imageryLayers.length === 0) {
-    viewer.imageryLayers.addImageryProvider(osmProvider);
-  }
-
-  // 3. Sécurité anti-crash
+  // 4. Protection contre le crash de rendu
   viewer.scene.rethrowRenderErrors = false;
   viewer.useDefaultRenderLoop = true;
   viewer.scene.globe.show = true;
 
-  // 4. Correctif pour application.js (évite l'erreur "reading surface")
+  if (viewer.scene.renderError) {
+    viewer.scene.renderError.addEventListener((scene, error) => {
+      console.warn('Erreur de rendu ou de texture ignorée par la sécurité :', error);
+    });
+  }
+
+  // 5. Attacher la propriété .surface attendue par application.js sans casser les getters
   viewer.surface = viewer.scene.globe;
-  viewer.scene.surface = viewer.scene.globe;
 
   // Masquer le message de chargement
   const loaderStatus = document.querySelector('#loading-loaderStatus');
   if (loaderStatus) loaderStatus.style.display = 'none';
 
-  // 5. Injecter le Menu Tactique HUD
+  // 6. Injecter le menu tactile HUD
   injectHUDMenu(viewer);
 
-  // Renvoyer l'objet compatible avec application.js
-  return Object.assign(viewer, {
-    viewer: viewer,
-    scene: viewer.scene,
-    surface: viewer.scene.globe,
-  });
+  return viewer;
 }
 
 /**
- * Création et injection du menu interactif
+ * Injection du menu HUD tactile
  */
 function injectHUDMenu(viewer) {
   if (document.getElementById('hud-tactical-menu')) return;
@@ -91,7 +91,6 @@ function injectHUDMenu(viewer) {
 
   document.body.appendChild(hudMenu);
 
-  // Événements des boutons
   document.getElementById('hud-toggle-btn').addEventListener('click', () => {
     document.getElementById('hud-body').classList.toggle('collapsed');
   });
