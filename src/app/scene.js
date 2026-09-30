@@ -1,18 +1,19 @@
 /**
- * OSINT COMMAND CENTER - FULL STACK SCENE MODULE
- * Intègre Leaflet.js, les flux réels (OpenSky, Overpass), les managers modulaires et le terminal IA.
+ * OSINT COMMAND CENTER - MODULE AVEC GESTION D'AFFICHAGE & CARTE
+ * Intègre les protections, le rendu visuel et la gestion de l'image/conteneur de la carte.
  */
 
 export function createApplicationScene(container, options = {}) {
-  // 1. Protection et initialisation du conteneur de la carte
+  // 1. Sécurisation absolue du conteneur
   const targetContainer = container || document.getElementById('map') || document.body;
-  
-  // Si le conteneur n'a pas d'ID ou de taille, on s'assure qu'il remplit l'écran
-  targetContainer.style.width = '100vw';
-  targetContainer.style.height = '100vh';
-  targetContainer.style.position = 'absolute';
-  targetContainer.style.top = '0';
-  targetContainer.style.left = '0';
+
+  if (targetContainer && targetContainer.style) {
+    try {
+      targetContainer.style.width = targetContainer.style.width || '100%';
+      targetContainer.style.height = targetContainer.style.height || '100%';
+      targetContainer.style.position = targetContainer.style.position || 'relative';
+    } catch (e) {}
+  }
 
   // 2. Injection des styles CSS de la salle de crise
   if (!document.getElementById('osint-crisis-styles')) {
@@ -28,7 +29,7 @@ export function createApplicationScene(container, options = {}) {
         z-index: 99999; background-size: 100% 3px, 3px 100%; pointer-events: none;
       }
 
-      /* Radar rotatif */
+      /* Radar rotatif d'ambiance */
       .osint-radar-sweep {
         position: fixed; bottom: 40px; right: 20px; width: 160px; height: 160px;
         border-radius: 50%; border: 1px dashed rgba(0, 255, 204, 0.3);
@@ -41,7 +42,7 @@ export function createApplicationScene(container, options = {}) {
       }
       @keyframes radar-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-      /* Ticker bas de page */
+      /* Ticker d'alerte en bas de page */
       #osint-ticker {
         position: fixed; bottom: 0; left: 0; width: 100vw; height: 24px;
         background: #020617; border-top: 1px solid rgba(0, 255, 204, 0.4);
@@ -49,13 +50,7 @@ export function createApplicationScene(container, options = {}) {
         overflow: hidden; z-index: 1001; white-space: nowrap; box-sizing: border-box; padding-left: 10px;
       }
 
-      /* Marqueurs */
-      .osint-dot { width: 10px; height: 10px; background: #00ffcc; border: 2px solid #020617; border-radius: 50%; box-shadow: 0 0 8px #00ffcc; cursor: pointer; transition: transform 0.2s; }
-      .osint-dot:hover { transform: scale(1.5); }
-      .dot-flight { background: #38bdf8; box-shadow: 0 0 8px #38bdf8; }
-      .dot-business { background: #facc15; box-shadow: 0 0 8px #facc15; }
-
-      /* Terminal IA */
+      /* Terminal d'analyse IA (Bas gauche) */
       #osint-ai-panel {
         position: fixed; bottom: 35px; left: 15px; width: 360px; max-height: 280px;
         background: rgba(2, 6, 23, 0.92); border: 1px solid rgba(0, 255, 204, 0.4);
@@ -64,15 +59,19 @@ export function createApplicationScene(container, options = {}) {
       }
       #osint-ai-panel h3 { margin: 0 0 8px 0; font-size: 13px; color: #f43f5e; border-bottom: 1px dashed rgba(244, 63, 94, 0.4); padding-bottom: 4px; }
       .ai-log-entry { margin-bottom: 6px; border-left: 2px solid #00ffcc; padding-left: 6px; }
+
+      /* Style des points sur la carte */
+      .osint-dot { width: 10px; height: 10px; background: #00ffcc; border: 2px solid #020617; border-radius: 50%; box-shadow: 0 0 8px #00ffcc; cursor: pointer; transition: transform 0.2s; }
+      .osint-dot:hover { transform: scale(1.5); }
     `;
     document.head.appendChild(style);
   }
 
-  // 3. Création des éléments visuels HUD (si non présents)
+  // 3. Création des éléments visuels de l'interface (HUD)
   if (!document.getElementById('osint-ticker')) {
     const ticker = document.createElement('div');
     ticker.id = 'osint-ticker';
-    ticker.innerHTML = `<span>⚡ [STRATCOM] : Surveillance globale et insulaire active • Flux temps réel connectés •</span>`;
+    ticker.innerHTML = `<span>⚡ [STRATCOM] : Surveillance globale et insulaire active • Rendu cartographique synchronisé •</span>`;
     document.body.appendChild(ticker);
   }
 
@@ -85,81 +84,76 @@ export function createApplicationScene(container, options = {}) {
   if (!document.getElementById('osint-ai-panel')) {
     const aiPanel = document.createElement('div');
     aiPanel.id = 'osint-ai-panel';
-    aiPanel.innerHTML = `<h3>TERMINAL ANALYSE IA</h3><div id="ai-log">Système opérationnel. En attente de données cartographiques...</div>`;
+    aiPanel.innerHTML = `<h3>TERMINAL ANALYSE IA</h3><div id="ai-log">Moteur graphique et imagerie opérationnels.</div>`;
     document.body.appendChild(aiPanel);
   }
 
-  // 4. Initialisation de la carte Leaflet (si L est disponible globalement)
+  // ==========================================
+  // 4. SECTION DÉDIÉE À L'AFFICHAGE ET L'IMAGERIE DE LA CARTE
+  // ==========================================
   let mapInstance = null;
-  let flightGroup = null;
-  let businessGroup = null;
 
-  try {
-    if (typeof L !== 'undefined') {
-      // Coordonnées par défaut centrées sur La Réunion (ou zone d'investigation)
-      mapInstance = L.map(targetContainer, {
-        zoomControl: false,
-        attributionControl: false
-      }).setView([-21.1151, 55.5364], 11);
-
-      // Fond de carte sombre type "Dark Matter"
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        maxZoom: 19,
-      }).addTo(mapInstance);
-
-      flightGroup = L.layerGroup().addTo(mapInstance);
-      businessGroup = L.layerGroup().addTo(mapInstance);
-
-      // Chargement initial de données réelles OpenStreetMap (Overpass API)
-      loadOverpassData(mapInstance, L, businessGroup);
-    }
-  } catch (err) {
-    console.warn("Erreur lors de l'initialisation de Leaflet :", err);
-  }
-
-  // Fonction de récupération Overpass (Commerces / Monopoles)
-  async function loadOverpassData(map, L, group) {
+  function initMapDisplay() {
     try {
-      const b = map.getBounds();
-      const query = `[out:json][timeout:25];(node["shop"](${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}););out body;`;
-      const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
-      const res = await fetch(url);
-      const data = await res.json();
-      
-      group.clearLayers();
-      if (data && data.elements) {
-        data.elements.forEach(el => {
-          if (!el.lat || !el.lon) return;
-          const name = el.tags && el.tags.name ? el.tags.name : 'Commerce local';
-          const icon = L.divIcon({ className: 'osint-dot dot-business', iconSize: [8, 8] });
-          const marker = L.marker([el.lat, el.lon], { icon }).bindPopup(`<b style="color:#000;">${name}</b>`);
-          group.addLayer(marker);
+      if (typeof L !== 'undefined' && targetContainer) {
+        // Nettoyage préalable si une instance existe déjà sur ce conteneur
+        if (targetContainer._leaflet_id) {
+          targetContainer._leaflet_id = null;
+        }
+
+        mapInstance = L.map(targetContainer, {
+          zoomControl: false,
+          attributionControl: false,
+          fadeAnimation: true,
+          zoomAnimation: true
+        }).setView([-21.1151, 55.5364], 11); // Centré sur La Réunion par défaut
+
+        // Couche de tuiles sombres optimisée pour l'imagerie tactique
+        const darkTileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+          maxZoom: 19,
+          subdomains: 'abcd',
+          detectRetina: true
         });
+
+        darkTileLayer.addTo(mapInstance);
+
+        // Forcer le rafraîchissement de l'affichage de l'image/tuiles après un court délai
+        setTimeout(() => {
+          if (mapInstance) {
+            mapInstance.invalidateSize();
+          }
+        }, 250);
+
+        console.log("Imagerie de la carte affichée avec succès.");
       }
     } catch (e) {
-      console.warn("Erreur chargement Overpass en arrière-plan.");
+      console.warn("Erreur lors de l'initialisation de l'affichage de la carte :", e);
     }
   }
 
-  console.log("Module OSINT complet initialisé avec succès.");
+  // Lancement de l'affichage
+  initMapDisplay();
 
-  // 5. Objet de retour complet et sécurisé attendu par l'application parente
+  // 5. Objet de retour complet et structuré pour l'application parente
   return {
     surface: targetContainer,
     scene: mapInstance,
     camera: null,
     renderer: null,
     resize() {
-      if (mapInstance) mapInstance.invalidateSize();
+      if (mapInstance && typeof mapInstance.invalidateSize === 'function') {
+        mapInstance.invalidateSize();
+      }
     },
     destroy() {
-      if (mapInstance) {
+      if (mapInstance && typeof mapInstance.remove === 'function') {
         mapInstance.remove();
         mapInstance = null;
       }
       document.getElementById('osint-ticker')?.remove();
       document.querySelector('.osint-radar-sweep')?.remove();
       document.getElementById('osint-ai-panel')?.remove();
+      document.getElementById('osint-crisis-styles')?.remove();
     }
   };
 }
