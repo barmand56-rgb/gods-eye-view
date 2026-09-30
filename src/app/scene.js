@@ -2,61 +2,81 @@ import * as Cesium from 'cesium';
 import { createApplicationViewer } from './viewer.js';
 
 /**
- * Initialise et configure la scène 3D Cesium (Version autonome & ultra-stable)
+ * Scène autonome multi-format (Carte 2D, Relief 2.5D, Globe 3D)
  */
 export async function createApplicationScene({ googleApiKey, cesiumToken } = {}) {
   const loaderStatus = document.querySelector('#loading-loaderStatus');
-
-  // 1. Conteneur pour les crédits
   const creditContainer = document.createElement('div');
   creditContainer.className = 'cesium-credit-container-custom';
   document.body.appendChild(creditContainer);
 
-  // 2. Définition du fond de carte OpenStreetMap (Gratuit, illimité et instantané)
-  const osmImagery = new Cesium.UrlTemplateImageryProvider({
-    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  // Désactiver Cesium Ion pour éviter les erreurs de clés réseau
+  Cesium.Ion.defaultAccessToken = cesiumToken || '';
+
+  // Fond de carte sombre tactique ultra-léger (CartoDB / OpenStreetMap)
+  const darkImagery = new Cesium.UrlTemplateImageryProvider({
+    url: 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
     maximumLevel: 19,
+    credit: 'CartoDB',
   });
 
-  // 3. Initialisation du Viewer Cesium
+  // Initialisation du Viewer
   const viewer = createApplicationViewer({
     container: 'cesiumContainer',
     creditContainer,
-    imageryProvider: osmImagery,
+    imageryProvider: darkImagery,
     baseLayerPicker: false,
     geocoder: false,
     timeline: false,
     animation: false,
+    sceneModePicker: false,
+    navigationHelpButton: false,
+    homeButton: false,
   });
 
-  // 4. Configuration de la sécurité anti-crash du moteur de rendu
+  // Nettoyage des éléments célestes qui font planter le rendu d'image
+  viewer.scene.skyBox = undefined;
+  viewer.scene.sun = undefined;
+  viewer.scene.moon = undefined;
+  viewer.scene.skyAtmosphere = undefined;
+  viewer.scene.backgroundColor = Cesium.Color.BLACK;
+
+  // Anti-crash de rendu
   viewer.scene.rethrowRenderErrors = false;
   viewer.useDefaultRenderLoop = true;
   viewer.scene.globe.show = true;
+  viewer.scene.globe.enableLighting = false;
 
   if (viewer.scene.renderError) {
     viewer.scene.renderError.addEventListener((scene, error) => {
-      console.warn('Avertissement de rendu ignoré par la sécurité :', error);
+      console.warn('Avertissement de rendu ignoré :', error);
     });
   }
 
-  // 5. Attacher la propriété .surface directement au viewer (sans modifier les getters natifs)
-  viewer.surface = viewer.scene.globe;
+  // Masquer le loader
+  if (loaderStatus) loaderStatus.style.display = 'none';
 
-  // Masquer le message de chargement
-  if (loaderStatus) {
-    loaderStatus.style.display = 'none';
-  }
-
-  // 6. Injecter le menu tactile "Pays par Pays"
+  // Injecter le menu avec sélecteur 2D / 3D / Relief
   injectCountryMenu(viewer);
 
-  // 7. Renvoyer le viewer propre
-  return viewer;
+  // Attacher .surface et retourner l'objet complet pour application.js
+  viewer.surface = viewer.scene.globe;
+
+  return {
+    viewer: viewer,
+    scene: viewer.scene,
+    surface: viewer.scene.globe,
+    globe: viewer.scene.globe,
+    camera: viewer.camera,
+    destroy: () => {
+      if (!viewer.isDestroyed()) viewer.destroy();
+    },
+    isDestroyed: () => viewer.isDestroyed(),
+  };
 }
 
 /**
- * Menu tactile interactif : Navigation Pays par Pays & Villes
+ * Menu tactile : Sélecteur 2D/3D + Navigation Pays
  */
 function injectCountryMenu(viewer) {
   if (document.getElementById('hud-country-menu')) return;
@@ -66,12 +86,21 @@ function injectCountryMenu(viewer) {
   hudMenu.innerHTML = `
     <div class="hud-panel">
       <div class="hud-header">
-        <span>🌍 GOD'S EYE - PAYS</span>
+        <span>🌍 GOD'S EYE - CONTROL</span>
         <button id="hud-toggle-btn">☰</button>
       </div>
       <div class="hud-body" id="hud-body">
+        
         <div class="hud-section">
-          <label>SÉLECTEUR DE PAYS</label>
+          <label>📐 MODE D'AFFICHAGE</label>
+          <div class="hud-grid">
+            <button class="hud-btn highlight" id="btn-mode-2d">🗺️ Carte 2D</button>
+            <button class="hud-btn" id="btn-mode-3d">🌐 Globe 3D</button>
+          </div>
+        </div>
+
+        <div class="hud-section">
+          <label>SELECTEUR DE PAYS</label>
           <select id="country-select" class="hud-select">
             <option value="">-- Choisir un pays --</option>
             <option value="2.3522,48.8566,1200000">🇫🇷 France</option>
@@ -85,7 +114,6 @@ function injectCountryMenu(viewer) {
             <option value="12.4964,41.9028,1200000">🇮🇹 Italie</option>
             <option value="-3.7038,40.4167,1200000">🇪🇸 Espagne</option>
             <option value="37.6173,55.7558,2000000">🇷🇺 Russie</option>
-            <option value="25.0834,-29.0000,1800000">🇿🇦 Afrique du Sud</option>
           </select>
         </div>
 
@@ -101,7 +129,7 @@ function injectCountryMenu(viewer) {
 
         <div class="hud-section">
           <label>⚙️ CONTRÔLES</label>
-          <button class="hud-btn highlight" id="btn-reset-view">🎯 Vue Globale (Terre)</button>
+          <button class="hud-btn highlight" id="btn-reset-view">🎯 Recentrer Vue</button>
         </div>
       </div>
     </div>
@@ -109,11 +137,23 @@ function injectCountryMenu(viewer) {
 
   document.body.appendChild(hudMenu);
 
-  // Événements d'interaction
+  // --- ÉVÉNEMENTS DU MENU ---
+
+  // Ouvrir / Réduire le menu
   document.getElementById('hud-toggle-btn').addEventListener('click', () => {
     document.getElementById('hud-body').classList.toggle('collapsed');
   });
 
+  // Basculer entre Carte 2D et Globe 3D
+  document.getElementById('btn-mode-2d').addEventListener('click', () => {
+    viewer.scene.morphTo2D(1.0);
+  });
+
+  document.getElementById('btn-mode-3d').addEventListener('click', () => {
+    viewer.scene.morphTo3D(1.0);
+  });
+
+  // Sélection de pays
   const select = document.getElementById('country-select');
   select.addEventListener('change', (e) => {
     if (!e.target.value) return;
@@ -121,7 +161,8 @@ function injectCountryMenu(viewer) {
     flyToLocation(viewer, lon, lat, alt);
   });
 
-  document.querySelectorAll('.hud-grid .hud-btn').forEach((btn) => {
+  // Villes clés
+  document.querySelectorAll('.hud-grid .hud-btn[data-coords]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const coords = btn.getAttribute('data-coords');
       if (coords) {
@@ -131,6 +172,7 @@ function injectCountryMenu(viewer) {
     });
   });
 
+  // Recentrer la vue
   document.getElementById('btn-reset-view').addEventListener('click', () => {
     viewer.camera.flyHome(1.5);
   });
@@ -139,11 +181,6 @@ function injectCountryMenu(viewer) {
 function flyToLocation(viewer, lon, lat, alt) {
   viewer.camera.flyTo({
     destination: Cesium.Cartesian3.fromDegrees(lon, lat, alt),
-    orientation: {
-      heading: Cesium.Math.toRadians(0),
-      pitch: Cesium.Math.toRadians(-50),
-      roll: 0,
-    },
     duration: 2,
   });
 }
