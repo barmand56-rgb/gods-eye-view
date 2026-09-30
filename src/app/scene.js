@@ -1,12 +1,12 @@
 /**
- * Intégration Leaflet Tactique - Moteur 2D Ultra-Fluide
+ * Intégration Leaflet Tactique - 100% Gratuit, Zéro Clé API
  */
 export async function createApplicationScene(options = {}) {
   // Masquage du loader
   const loaderStatus = document.querySelector('#loading-loaderStatus');
   if (loaderStatus) loaderStatus.style.display = 'none';
 
-  // Préparation du conteneur HTML
+  // Conteneur de carte
   let container = document.getElementById('cesiumContainer');
   if (!container) {
     container = document.createElement('div');
@@ -17,10 +17,9 @@ export async function createApplicationScene(options = {}) {
   container.style.height = '100dvh';
   container.style.backgroundColor = '#020617';
 
-  // Récupération de Leaflet
   const L = window.L;
 
-  // Initialisation de la carte Leaflet (Vue globale)
+  // Initialisation Leaflet
   const map = L.map('cesiumContainer', {
     center: [20, 0],
     zoom: 3,
@@ -28,22 +27,28 @@ export async function createApplicationScene(options = {}) {
     attributionControl: false
   });
 
-  // Layer 1 : Carte Tactique Sombre (CartoDB Dark Matter)
-  const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    maxZoom: 19,
-    subdomains: 'abcd'
-  }).addTo(map);
+  // Layer 1 : Carte ESRI Dark Canvas (100% Gratuite, Sans clé API, Ultra-fluidité)
+  const darkLayer = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom: 16 }
+  ).addTo(map);
 
-  // Layer 2 : Carte Topographique
-  const topoLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
-    maxZoom: 17
-  });
+  // Layer 2 : Vue Satellite ESRI (Gratuite)
+  const satelliteLayer = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom: 18 }
+  );
 
-  // Injection du HUD de contrôle
-  injectHUDControls(map, L, darkLayer, topoLayer);
+  // Layer 3 : OpenStreetMap Standard (Gratuite)
+  const osmLayer = L.tileLayer(
+    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { maxZoom: 18 }
+  );
 
-  // --- COMPATIBILITÉ AVEC APPLICATION.JS ---
-  // Simulation des objets Cesium pour empêcher tout crash sur 'surface' ou 'globe'
+  // Injection du HUD
+  injectHUDControls(map, darkLayer, satelliteLayer, osmLayer);
+
+  // --- MOCK COMPLET POUR ÉVITER TOUT CRASH SUR APPLICATION.JS ---
   const dummySurface = {
     globe: {},
     enableLighting: false,
@@ -52,7 +57,7 @@ export async function createApplicationScene(options = {}) {
 
   const dummyCamera = {
     flyTo: ({ destination, duration }) => {},
-    flyHome: () => map.setView([20, 0], 3)
+    flyHome: () => map.flyTo([20, 0], 3)
   };
 
   const dummyScene = {
@@ -76,9 +81,9 @@ export async function createApplicationScene(options = {}) {
 }
 
 /**
- * Menu Tactique Interactif HUD
+ * HUD Tactique
  */
-function injectHUDControls(map, L, darkLayer, topoLayer) {
+function injectHUDControls(map, darkLayer, satelliteLayer, osmLayer) {
   if (document.getElementById('hud-country-menu')) return;
 
   const hudMenu = document.createElement('div');
@@ -86,7 +91,7 @@ function injectHUDControls(map, L, darkLayer, topoLayer) {
   hudMenu.innerHTML = `
     <div class="hud-panel">
       <div class="hud-header">
-        <span>🎖️ GOD'S EYE - LEAFLET COMMAND</span>
+        <span>🎖️ GOD'S EYE - COMMAND</span>
         <button id="hud-toggle-btn">☰</button>
       </div>
       <div class="hud-body" id="hud-body">
@@ -95,7 +100,8 @@ function injectHUDControls(map, L, darkLayer, topoLayer) {
           <label>🎨 STYLE TACTIQUE</label>
           <div class="hud-grid">
             <button class="hud-btn highlight" id="btn-style-dark">🕶️ Sombre</button>
-            <button class="hud-btn" id="btn-style-topo">🏔️ Topo</button>
+            <button class="hud-btn" id="btn-style-sat">🛰️ Satellite</button>
+            <button class="hud-btn" id="btn-style-osm">🗺️ Plan</button>
           </div>
         </div>
 
@@ -132,27 +138,38 @@ function injectHUDControls(map, L, darkLayer, topoLayer) {
 
   document.body.appendChild(hudMenu);
 
-  // Toggle Menu
   document.getElementById('hud-toggle-btn')?.addEventListener('click', () => {
     document.getElementById('hud-body')?.classList.toggle('collapsed');
   });
 
-  // Styles de cartes
+  const setActive = (activeId) => {
+    ['btn-style-dark', 'btn-style-sat', 'btn-style-osm'].forEach(id => {
+      document.getElementById(id)?.classList.remove('highlight');
+    });
+    document.getElementById(activeId)?.classList.add('highlight');
+  };
+
   document.getElementById('btn-style-dark')?.addEventListener('click', () => {
-    if (map.hasLayer(topoLayer)) map.removeLayer(topoLayer);
+    if (map.hasLayer(satelliteLayer)) map.removeLayer(satelliteLayer);
+    if (map.hasLayer(osmLayer)) map.removeLayer(osmLayer);
     map.addLayer(darkLayer);
-    document.getElementById('btn-style-dark').classList.add('highlight');
-    document.getElementById('btn-style-topo').classList.remove('highlight');
+    setActive('btn-style-dark');
   });
 
-  document.getElementById('btn-style-topo')?.addEventListener('click', () => {
+  document.getElementById('btn-style-sat')?.addEventListener('click', () => {
     if (map.hasLayer(darkLayer)) map.removeLayer(darkLayer);
-    map.addLayer(topoLayer);
-    document.getElementById('btn-style-topo').classList.add('highlight');
-    document.getElementById('btn-style-dark').classList.remove('highlight');
+    if (map.hasLayer(osmLayer)) map.removeLayer(osmLayer);
+    map.addLayer(satelliteLayer);
+    setActive('btn-style-sat');
   });
 
-  // Sélection de pays (Lat, Lon, Zoom)
+  document.getElementById('btn-style-osm')?.addEventListener('click', () => {
+    if (map.hasLayer(darkLayer)) map.removeLayer(darkLayer);
+    if (map.hasLayer(satelliteLayer)) map.removeLayer(satelliteLayer);
+    map.addLayer(osmLayer);
+    setActive('btn-style-osm');
+  });
+
   document.getElementById('country-select')?.addEventListener('change', (e) => {
     const val = e.target.value;
     if (!val) return;
@@ -160,7 +177,6 @@ function injectHUDControls(map, L, darkLayer, topoLayer) {
     map.flyTo([lat, lon], zoom, { duration: 1.5 });
   });
 
-  // Villes clés
   document.querySelectorAll('.hud-grid .hud-btn[data-coords]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const coords = btn.getAttribute('data-coords');
@@ -171,12 +187,10 @@ function injectHUDControls(map, L, darkLayer, topoLayer) {
     });
   });
 
-  // Reset View
   document.getElementById('btn-reset-view')?.addEventListener('click', () => {
     map.flyTo([20, 0], 3, { duration: 1 });
   });
 }
 
-// Exports
 export const createScene = createApplicationScene;
 export default createApplicationScene;
