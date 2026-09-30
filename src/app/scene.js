@@ -2,20 +2,23 @@ import * as Cesium from 'cesium';
 import { createApplicationViewer } from './viewer.js';
 
 /**
- * Globe 3D simple, rapide et autonome avec menu "Pays par Pays"
+ * Initialise et configure la scène 3D Cesium (Version autonome & ultra-stable)
  */
 export async function createApplicationScene({ googleApiKey, cesiumToken } = {}) {
+  const loaderStatus = document.querySelector('#loading-loaderStatus');
+
+  // 1. Conteneur pour les crédits
   const creditContainer = document.createElement('div');
   creditContainer.className = 'cesium-credit-container-custom';
   document.body.appendChild(creditContainer);
 
-  // 1. Carte OpenStreetMap 100% gratuite (charge instantanément sans clé ni erreur)
+  // 2. Définition du fond de carte OpenStreetMap (Gratuit, illimité et instantané)
   const osmImagery = new Cesium.UrlTemplateImageryProvider({
     url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     maximumLevel: 19,
   });
 
-  // 2. Initialisation du Viewer Cesium autonome
+  // 3. Initialisation du Viewer Cesium
   const viewer = createApplicationViewer({
     container: 'cesiumContainer',
     creditContainer,
@@ -26,36 +29,30 @@ export async function createApplicationScene({ googleApiKey, cesiumToken } = {})
     animation: false,
   });
 
-  // 3. Protection anti-crash
+  // 4. Configuration de la sécurité anti-crash du moteur de rendu
   viewer.scene.rethrowRenderErrors = false;
   viewer.useDefaultRenderLoop = true;
   viewer.scene.globe.show = true;
-  viewer.scene.globe.enableLighting = false;
 
   if (viewer.scene.renderError) {
     viewer.scene.renderError.addEventListener((scene, error) => {
-      console.warn('Avertissement de rendu (ignoré) :', error);
+      console.warn('Avertissement de rendu ignoré par la sécurité :', error);
     });
   }
 
-  // Masquer l'écran de chargement
-  const loaderStatus = document.querySelector('#loading-loaderStatus');
-  if (loaderStatus) loaderStatus.style.display = 'none';
+  // 5. Attacher la propriété .surface directement au viewer (sans modifier les getters natifs)
+  viewer.surface = viewer.scene.globe;
 
-  // 4. Injecter le menu "Pays par Pays"
+  // Masquer le message de chargement
+  if (loaderStatus) {
+    loaderStatus.style.display = 'none';
+  }
+
+  // 6. Injecter le menu tactile "Pays par Pays"
   injectCountryMenu(viewer);
 
-  // 5. Retourner l'objet complet attendu par application.js (corrige l'erreur 'surface')
-  return {
-    viewer: viewer,
-    scene: viewer.scene,
-    surface: viewer.scene.globe,
-    globe: viewer.scene.globe,
-    destroy: () => {
-      if (!viewer.isDestroyed()) viewer.destroy();
-    },
-    isDestroyed: () => viewer.isDestroyed(),
-  };
+  // 7. Renvoyer le viewer propre
+  return viewer;
 }
 
 /**
@@ -74,7 +71,7 @@ function injectCountryMenu(viewer) {
       </div>
       <div class="hud-body" id="hud-body">
         <div class="hud-section">
-          <label>SELECTEUR DE PAYS</label>
+          <label>SÉLECTEUR DE PAYS</label>
           <select id="country-select" class="hud-select">
             <option value="">-- Choisir un pays --</option>
             <option value="2.3522,48.8566,1200000">🇫🇷 France</option>
@@ -103,7 +100,7 @@ function injectCountryMenu(viewer) {
         </div>
 
         <div class="hud-section">
-          <label>⚙️ CONTROLES</label>
+          <label>⚙️ CONTRÔLES</label>
           <button class="hud-btn highlight" id="btn-reset-view">🎯 Vue Globale (Terre)</button>
         </div>
       </div>
@@ -112,7 +109,7 @@ function injectCountryMenu(viewer) {
 
   document.body.appendChild(hudMenu);
 
-  // Événements
+  // Événements d'interaction
   document.getElementById('hud-toggle-btn').addEventListener('click', () => {
     document.getElementById('hud-body').classList.toggle('collapsed');
   });
@@ -150,15 +147,3 @@ function flyToLocation(viewer, lon, lat, alt) {
     duration: 2,
   });
 }
-
-// À la toute fin de createApplicationScene() dans src/app/scene.js :
-return {
-  viewer: viewer,
-  scene: viewer.scene,
-  surface: viewer.scene.globe,
-  globe: viewer.scene.globe,
-  destroy: () => {
-    if (!viewer.isDestroyed()) viewer.destroy();
-  },
-  isDestroyed: () => viewer.isDestroyed(),
-};
