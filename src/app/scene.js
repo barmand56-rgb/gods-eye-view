@@ -1,13 +1,12 @@
 /**
  * ============================================================================
  * OSINT COMMAND CENTER - MODULE GÉOSPATIAL MONDIAL MAXIMAL (SCENE.JS)
- * Version Définitive Robuste (800+ Lignes) : OpenSky avec Fallback Intelligent,
- * Chat IA Interactif, Popups Fluides & Anti-Crash iPhone.
+ * Version Finale Blindée : Compatibilité Totale Application Parent (Surface Services)
  * ============================================================================
  */
 
 export function createApplicationScene(container, options = {}) {
-  console.log("[OSINT_CORE] Initialisation du module OSINT (Robustesse OpenSky activée)...");
+  console.log("[OSINT_CORE] Initialisation du module OSINT (Compatibilité Application Parent)...");
 
   const OPENAI_API_KEY = options.openaiKey || localStorage.getItem('openai_api_key') || '';
 
@@ -20,6 +19,7 @@ export function createApplicationScene(container, options = {}) {
       if (typeof container.appendChild === 'function') domTarget = container;
       else if (container.surface && typeof container.surface.appendChild === 'function') domTarget = container.surface;
       else if (container.domElement && typeof container.domElement.appendChild === 'function') domTarget = container.domElement;
+      else if (typeof container.getSurface === 'function') domTarget = container.getSurface();
     }
   } catch (error) {
     console.error("[OSINT_CORE] Erreur conteneur :", error);
@@ -339,7 +339,6 @@ export function createApplicationScene(container, options = {}) {
           pushLog("Vue mondiale activée.");
         });
 
-        // CHARGEMENT OPENSKY AVEC FALLBACK INTELLIGENT (ANTI-BLOCAGE API)
         document.getElementById('btn-load-live-flights')?.addEventListener('click', async () => {
           if (isRequestPending) return;
           isRequestPending = true;
@@ -349,7 +348,7 @@ export function createApplicationScene(container, options = {}) {
           let success = false;
           try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000); // Timeout rapide pour ne pas figer
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
             const res = await fetch('https://opensky-network.org/api/states/all', { signal: controller.signal });
             clearTimeout(timeoutId);
             
@@ -369,11 +368,11 @@ export function createApplicationScene(container, options = {}) {
               }
             }
           } catch (e) {
-            // L'API bloque ou timeout -> passage au mode de secours intelligent
+            // Bascule transparente vers le secours
           }
 
           if (!success) {
-            pushLog("⚠ Restriction CORS / Quota OpenSky détecté. Bascule sur le réseau de vecteurs aériens simulés de secours...");
+            pushLog("ℹ Mode de secours actif : Affichage des vecteurs aériens simulés sur la zone.");
             const center = mapInstance.getCenter();
             const fallbackFlights = [
               { callsign: "AFR642 (Airbus A350)", lat: center.lat + 0.8, lon: center.lng + 0.6, alt: "36 000 ft", speed: "480 kts" },
@@ -384,7 +383,7 @@ export function createApplicationScene(container, options = {}) {
               const icon = L.divIcon({ className: 'tactical-marker marker-flight', iconSize: [10, 10] });
               L.marker([f.lat, f.lon], { icon }).bindPopup(`<b>${f.callsign}</b><br>Alt : ${f.alt}<br>Vitesse : ${f.speed}`, { autoClose: true, keepInView: true }).addTo(activeLayerGroup);
             });
-            pushLog("✈️ Vecteurs aériens de secours affichés en direct sur la zone.");
+            pushLog("✈️ Vecteurs aériens de secours affichés en direct.");
           }
 
           isRequestPending = false;
@@ -457,19 +456,23 @@ export function createApplicationScene(container, options = {}) {
   }
 
   // --------------------------------------------------------------------------
-  // SECTION 5 : CONTRÔLEUR DE SCÈNE & SERVICES DE SURFACE
+  // SECTION 5 : SERVICES DE SURFACE TOTAUX (SATISFAIT TOUTES LES EXIGENCES PARENTES)
   // --------------------------------------------------------------------------
   const sceneOperations = {
     surface: domTarget,
-    getSurface() { return domTarget; }
+    getSurface() { return domTarget; },
+    services: { surface: domTarget },
+    activeSurface: domTarget
   };
 
   const sceneController = {
     surface: domTarget,
     operations: sceneOperations,
+    services: sceneOperations,
     scene: mapInstance,
     camera: null,
     renderer: null,
+    getSurface() { return domTarget; },
     resize() {
       if (mapInstance && typeof mapInstance.invalidateSize === 'function') mapInstance.invalidateSize();
     },
